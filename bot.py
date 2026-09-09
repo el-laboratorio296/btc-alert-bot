@@ -58,45 +58,42 @@ def obtener_precios():
 
     datos = respuesta.json()
 
-    precios = [
+    return [
         float(punto[1])
         for punto in datos["prices"]
     ]
-
-    return precios
 
 
 def calcular_rsi(precios, periodo=14):
     if len(precios) < periodo + 1:
         raise ValueError("No hay suficientes datos para calcular el RSI.")
 
-    cambios = []
+    cambios = [
+        precios[i] - precios[i - 1]
+        for i in range(1, len(precios))
+    ]
 
-    for i in range(1, len(precios)):
-        cambios.append(precios[i] - precios[i - 1])
+    ganancias = [
+        max(cambio, 0)
+        for cambio in cambios
+    ]
 
-    ganancias = []
-    perdidas = []
-
-    for cambio in cambios:
-        if cambio > 0:
-            ganancias.append(cambio)
-            perdidas.append(0)
-        else:
-            ganancias.append(0)
-            perdidas.append(abs(cambio))
+    perdidas = [
+        max(-cambio, 0)
+        for cambio in cambios
+    ]
 
     promedio_ganancia = sum(ganancias[:periodo]) / periodo
     promedio_perdida = sum(perdidas[:periodo]) / periodo
 
     for i in range(periodo, len(ganancias)):
         promedio_ganancia = (
-            (promedio_ganancia * (periodo - 1))
+            promedio_ganancia * (periodo - 1)
             + ganancias[i]
         ) / periodo
 
         promedio_perdida = (
-            (promedio_perdida * (periodo - 1))
+            promedio_perdida * (periodo - 1)
             + perdidas[i]
         ) / periodo
 
@@ -105,71 +102,57 @@ def calcular_rsi(precios, periodo=14):
 
     rs = promedio_ganancia / promedio_perdida
 
-    rsi = 100 - (100 / (1 + rs))
-
-    return rsi
+    return 100 - (100 / (1 + rs))
 
 
 def analizar(precio, cambio_24h, rsi):
-    alertas = []
-
-    if cambio_24h <= -5:
-        alertas.append("📉 Caída fuerte superior al 5%")
-
-    elif cambio_24h <= -3:
-        alertas.append("📉 Caída importante superior al 3%")
-
-    if rsi <= 30:
-        alertas.append("🟢 RSI en zona de sobreventa")
-
-    elif rsi <= 35:
-        alertas.append("🟡 RSI acercándose a sobreventa")
-
     if cambio_24h <= -3 and rsi <= 30:
         return (
             "🚨 ALERTA FUERTE DE BTC\n\n"
-            + "\n".join(alertas)
-            + "\n\n"
-            "🎯 Posible zona de interés.\n"
+            f"₿ Precio: ${precio:,.2f}\n"
+            f"📉 Caída 24h: {cambio_24h:.2f}%\n"
+            f"📊 RSI(14): {rsi:.2f}\n\n"
+            "🟢 Caída importante + RSI en sobreventa.\n"
+            "🎯 Posible zona de interés.\n\n"
             "⚠️ No es una señal garantizada de compra."
         )
 
-    if alertas:
+    if cambio_24h <= -5:
         return (
-            "⚠️ ALERTA BTC\n\n"
-            + "\n".join(alertas)
-            + "\n\n"
-            "👀 Conviene vigilar el mercado."
+            "🚨 ALERTA BTC\n\n"
+            f"₿ Precio: ${precio:,.2f}\n"
+            f"📉 Caída 24h: {cambio_24h:.2f}%\n"
+            f"📊 RSI(14): {rsi:.2f}\n\n"
+            "📉 BTC presenta una caída fuerte.\n"
+            "👀 Vigilar el mercado."
         )
 
-    return (
-        "🟢 BTC — SIN ALERTA\n\n"
-        "No se detectan condiciones fuertes "
-        "de caída o sobreventa en este momento."
-    )
+    if rsi <= 30:
+        return (
+            "🟢 ALERTA RSI BTC\n\n"
+            f"₿ Precio: ${precio:,.2f}\n"
+            f"📉 Cambio 24h: {cambio_24h:.2f}%\n"
+            f"📊 RSI(14): {rsi:.2f}\n\n"
+            "🟢 RSI en zona de sobreventa.\n"
+            "🎯 Posible zona de interés.\n\n"
+            "⚠️ No es una señal garantizada de compra."
+        )
+
+    return None
 
 
 if __name__ == "__main__":
-
     precio, cambio_24h = obtener_datos_bitcoin()
 
     precios = obtener_precios()
 
     rsi = calcular_rsi(precios)
 
-    resultado = analizar(
+    alerta = analizar(
         precio,
         cambio_24h,
         rsi
     )
 
-    mensaje = (
-        "🤖 BTC ALERT BOT\n\n"
-        f"₿ Bitcoin: ${precio:,.2f}\n"
-        f"📉 Cambio 24h: {cambio_24h:.2f}%\n"
-        f"📊 RSI(14): {rsi:.2f}\n\n"
-        f"{resultado}\n\n"
-        "✅ Análisis completado correctamente."
-    )
-
-    enviar_telegram(mensaje)
+    if alerta:
+        enviar_telegram(alerta)
