@@ -21,8 +21,23 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
+      - name: Recuperar estado del bot
+        uses: actions/cache/restore@v4
+        with:
+          path: bot_state.json
+          key: btc-alert-state-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            btc-alert-state-${{ github.ref_name }}-
+
       - name: Ejecutar bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python bot.py
+
+      - name: Guardar estado del bot
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: bot_state.json
+          key: btc-alert-state-${{ github.ref_name }}-${{ github.run_id }}
