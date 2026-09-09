@@ -1,6 +1,5 @@
 name: Probar BTC Alert Bot
 
-on:
   on:
   workflow_dispatch:
   schedule:
