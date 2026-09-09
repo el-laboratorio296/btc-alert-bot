@@ -13,16 +13,12 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 STATE_FILE = "bot_state.json"
 
-COINGECKO_MARKETS_URL = (
+MARKETS_URL = (
     "https://api.coingecko.com/api/v3/coins/markets"
 )
 
-COINGECKO_CHART_URL = (
-    "https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
-)
-
 HEADERS = {
-    "User-Agent": "BTC-Alert-Laboratorio/1.0"
+    "User-Agent": "BTC-Alert-Laboratorio/2.0"
 }
 
 
@@ -40,6 +36,23 @@ MONEDAS_PRINCIPALES = {
 
 
 # ============================================================
+# STABLECOINS QUE NO QUEREMOS COMO SEXTA MONEDA
+# ============================================================
+
+STABLECOINS = {
+    "usdt",
+    "usdc",
+    "dai",
+    "usde",
+    "fdusd",
+    "tusd",
+    "usds",
+    "usdd",
+    "pyusd"
+}
+
+
+# ============================================================
 # PETICIONES HTTP
 # ============================================================
 
@@ -53,8 +66,28 @@ def solicitar(url, params=None, intentos=3):
                 url,
                 params=params,
                 headers=HEADERS,
-                timeout=20
+                timeout=25
             )
+
+            # Si CoinGecko nos limita temporalmente
+            # esperamos antes de volver a intentar.
+
+            if respuesta.status_code == 429:
+
+                espera = 15 * (
+                    intento + 1
+                )
+
+                print(
+                    f"CoinGecko 429. "
+                    f"Esperando {espera}s..."
+                )
+
+                if intento < intentos - 1:
+
+                    time.sleep(espera)
+
+                    continue
 
             respuesta.raise_for_status()
 
@@ -64,8 +97,8 @@ def solicitar(url, params=None, intentos=3):
 
             print(
                 f"Error HTTP "
-                f"(intento {intento + 1}/{intentos}): "
-                f"{error}"
+                f"(intento {intento + 1}/"
+                f"{intentos}): {error}"
             )
 
             if intento < intentos - 1:
@@ -82,11 +115,19 @@ def solicitar(url, params=None, intentos=3):
 def enviar_telegram(mensaje):
 
     if not TELEGRAM_BOT_TOKEN:
-        print("ERROR: falta TELEGRAM_BOT_TOKEN.")
+
+        print(
+            "Faltan las credenciales de Telegram."
+        )
+
         return False
 
     if not TELEGRAM_CHAT_ID:
-        print("ERROR: falta TELEGRAM_CHAT_ID.")
+
+        print(
+            "Falta TELEGRAM_CHAT_ID."
+        )
+
         return False
 
     url = (
@@ -109,14 +150,16 @@ def enviar_telegram(mensaje):
 
         respuesta.raise_for_status()
 
-        print("Mensaje enviado a Telegram.")
+        print(
+            "Mensaje enviado a Telegram."
+        )
 
         return True
 
     except requests.RequestException as error:
 
         print(
-            f"Error enviando mensaje a Telegram: "
+            f"Error enviando Telegram: "
             f"{error}"
         )
 
@@ -124,7 +167,7 @@ def enviar_telegram(mensaje):
 
 
 # ============================================================
-# MEMORIA DEL BOT
+# MEMORIA
 # ============================================================
 
 def cargar_estado():
@@ -133,11 +176,12 @@ def cargar_estado():
         "ultima_alerta": {}
     }
 
-    if not os.path.exists(STATE_FILE):
+    if not os.path.exists(
+        STATE_FILE
+    ):
 
         print(
-            "No existe memoria anterior. "
-            "Creando memoria nueva."
+            "No existe memoria anterior."
         )
 
         return estado_por_defecto
@@ -150,60 +194,40 @@ def cargar_estado():
             encoding="utf-8"
         ) as archivo:
 
-            estado = json.load(archivo)
-
-        if not isinstance(estado, dict):
-
-            print(
-                "Memoria inválida. "
-                "Creando memoria nueva."
+            estado = json.load(
+                archivo
             )
+
+        if not isinstance(
+            estado,
+            dict
+        ):
 
             return estado_por_defecto
 
-        ultima_alerta = estado.get(
-            "ultima_alerta"
-        )
-
-        # ----------------------------------------------------
-        # CORRECCIÓN IMPORTANTE
-        # ----------------------------------------------------
-        # Si el estado antiguo tiene:
-        #
-        # "ultima_alerta": null
-        #
-        # lo convertimos automáticamente en:
-        #
-        # "ultima_alerta": {}
-        #
-        # para evitar el error NoneType.
-        # ----------------------------------------------------
-
         if not isinstance(
-            ultima_alerta,
+            estado.get(
+                "ultima_alerta"
+            ),
             dict
         ):
 
             print(
-                "Formato antiguo de memoria detectado."
+                "Formato antiguo "
+                "de memoria detectado."
             )
 
-            print(
-                "Reiniciando memoria de alertas."
-            )
-
-            estado["ultima_alerta"] = {}
+            estado[
+                "ultima_alerta"
+            ] = {}
 
         return estado
 
     except Exception as error:
 
         print(
-            f"Error leyendo memoria: {error}"
-        )
-
-        print(
-            "Se utilizará una memoria nueva."
+            f"Error leyendo memoria: "
+            f"{error}"
         )
 
         return estado_por_defecto
@@ -213,16 +237,16 @@ def guardar_estado(estado):
 
     try:
 
-        # Seguridad adicional:
-        # nunca permitimos guardar None
-        # como ultima_alerta.
-
         if not isinstance(
-            estado.get("ultima_alerta"),
+            estado.get(
+                "ultima_alerta"
+            ),
             dict
         ):
 
-            estado["ultima_alerta"] = {}
+            estado[
+                "ultima_alerta"
+            ] = {}
 
         with open(
             STATE_FILE,
@@ -244,12 +268,13 @@ def guardar_estado(estado):
     except Exception as error:
 
         print(
-            f"Error guardando memoria: {error}"
+            f"Error guardando memoria: "
+            f"{error}"
         )
 
 
 # ============================================================
-# OBTENER MERCADO
+# OBTENER TODO EL MERCADO
 # ============================================================
 
 def obtener_mercado():
@@ -259,12 +284,25 @@ def obtener_mercado():
         "order": "volume_desc",
         "per_page": 100,
         "page": 1,
-        "sparkline": "false",
-        "price_change_percentage": "24h"
+
+        # IMPORTANTE:
+        # ahora obtenemos el histórico
+        # dentro de la misma consulta.
+
+        "sparkline": "true",
+
+        # Varios períodos para analizar
+        # tendencia y momentum.
+
+        "price_change_percentage": (
+            "1h,24h,7d"
+        ),
+
+        "locale": "en"
     }
 
     datos = solicitar(
-        COINGECKO_MARKETS_URL,
+        MARKETS_URL,
         parametros
     )
 
@@ -272,7 +310,7 @@ def obtener_mercado():
 
         raise Exception(
             "No fue posible obtener "
-            "los datos del mercado."
+            "el mercado."
         )
 
     print(
@@ -284,174 +322,6 @@ def obtener_mercado():
 
 
 # ============================================================
-# SELECCIONAR SEXTA MONEDA
-# ============================================================
-
-def seleccionar_moneda_dinamica(mercado):
-
-    ids_principales = set(
-        MONEDAS_PRINCIPALES.keys()
-    )
-
-    monedas_estables = {
-        "usdt",
-        "usdc",
-        "dai",
-        "usde",
-        "fdusd",
-        "tusd",
-        "usds",
-        "usdd",
-        "pyusd"
-    }
-
-    candidatos = []
-
-    for moneda in mercado:
-
-        coin_id = moneda.get("id")
-
-        simbolo = moneda.get(
-            "symbol",
-            ""
-        ).lower()
-
-        precio = moneda.get(
-            "current_price"
-        )
-
-        volumen = moneda.get(
-            "total_volume"
-        ) or 0
-
-        cambio = moneda.get(
-            "price_change_percentage_24h"
-        )
-
-        market_cap = moneda.get(
-            "market_cap"
-        ) or 0
-
-        if coin_id in ids_principales:
-            continue
-
-        if simbolo in monedas_estables:
-            continue
-
-        if not precio:
-            continue
-
-        if cambio is None:
-            continue
-
-        if volumen < 30_000_000:
-            continue
-
-        movimiento = abs(cambio)
-
-        if movimiento < 3:
-            continue
-
-        if market_cap < 300_000_000:
-            continue
-
-        # Puntuación basada en:
-        # movimiento + volumen + capitalización
-
-        puntuacion = (
-            movimiento * 3
-            + min(
-                volumen / 100_000_000,
-                5
-            )
-            + min(
-                market_cap / 1_000_000_000,
-                3
-            )
-        )
-
-        candidatos.append(
-            (
-                puntuacion,
-                moneda
-            )
-        )
-
-    if not candidatos:
-
-        print(
-            "No se encontró una "
-            "sexta moneda adecuada."
-        )
-
-        return None
-
-    candidatos.sort(
-        key=lambda x: x[0],
-        reverse=True
-    )
-
-    seleccionada = candidatos[0][1]
-
-    print(
-        "Sexta moneda seleccionada: "
-        f"{seleccionada.get('symbol', '').upper()} "
-        f"{seleccionada.get('name', '')}"
-    )
-
-    return seleccionada
-
-
-# ============================================================
-# OBTENER HISTÓRICO
-# ============================================================
-
-def obtener_historico(coin_id):
-
-    url = COINGECKO_CHART_URL.format(
-        coin_id=coin_id
-    )
-
-    parametros = {
-        "vs_currency": "usd",
-        "days": 2,
-        "interval": "hourly"
-    }
-
-    datos = solicitar(
-        url,
-        parametros
-    )
-
-    if not datos:
-
-        print(
-            f"No se pudo obtener histórico "
-            f"de {coin_id}."
-        )
-
-        return [], []
-
-    precios = [
-        elemento[1]
-        for elemento in datos.get(
-            "prices",
-            []
-        )
-    ]
-
-    volumenes = [
-        elemento[1]
-        for elemento in datos.get(
-            "total_volumes",
-            []
-        )
-    ]
-
-    return precios, volumenes
-
-
-# ============================================================
 # RSI
 # ============================================================
 
@@ -459,6 +329,10 @@ def calcular_rsi(
     precios,
     periodo=14
 ):
+
+    if not precios:
+
+        return None
 
     if len(precios) < periodo + 1:
 
@@ -472,7 +346,8 @@ def calcular_rsi(
     ):
 
         cambios.append(
-            precios[i] - precios[i - 1]
+            precios[i]
+            - precios[i - 1]
         )
 
     ganancias = [
@@ -486,12 +361,16 @@ def calcular_rsi(
     ]
 
     promedio_ganancia = (
-        sum(ganancias[:periodo])
+        sum(
+            ganancias[:periodo]
+        )
         / periodo
     )
 
     promedio_perdida = (
-        sum(perdidas[:periodo])
+        sum(
+            perdidas[:periodo]
+        )
         / periodo
     )
 
@@ -525,120 +404,455 @@ def calcular_rsi(
         / promedio_perdida
     )
 
-    return 100 - (
-        100 / (1 + rs)
-    )
-
-
-# ============================================================
-# RATIO DE VOLUMEN
-# ============================================================
-
-def calcular_ratio_volumen(
-    volumenes
-):
-
-    if len(volumenes) < 10:
-
-        return None
-
-    volumen_actual = volumenes[-1]
-
-    anteriores = volumenes[-25:-1]
-
-    if not anteriores:
-
-        return None
-
-    promedio = (
-        sum(anteriores)
-        / len(anteriores)
-    )
-
-    if promedio <= 0:
-
-        return None
-
     return (
-        volumen_actual
-        / promedio
-    )
-
-
-# ============================================================
-# ANÁLISIS DE UNA MONEDA
-# ============================================================
-
-def analizar_moneda(
-    coin_id,
-    simbolo,
-    nombre,
-    precio,
-    cambio_24h,
-    volumen_24h,
-    precios,
-    volumenes
-):
-
-    if not precios:
-
-        return None
-
-    rsi = calcular_rsi(
-        precios
-    )
-
-    ratio_volumen = (
-        calcular_ratio_volumen(
-            volumenes
+        100
+        - (
+            100
+            / (1 + rs)
         )
     )
 
-    ultimos_24 = precios[-24:]
 
-    minimo_24h = min(
-        ultimos_24
+# ============================================================
+# LIQUIDEZ
+# ============================================================
+
+def calcular_liquidez(
+    volumen,
+    market_cap
+):
+
+    if not volumen:
+        return None
+
+    if not market_cap:
+        return None
+
+    return (
+        volumen
+        / market_cap
     )
 
-    maximo_24h = max(
-        ultimos_24
+
+# ============================================================
+# SELECCIÓN INTELIGENTE DE LA SEXTA MONEDA
+# ============================================================
+
+def seleccionar_moneda_dinamica(
+    mercado
+):
+
+    candidatos = []
+
+    ids_fijos = set(
+        MONEDAS_PRINCIPALES.keys()
     )
 
-    promedio_24h = (
-        sum(ultimos_24)
-        / len(ultimos_24)
+    for moneda in mercado:
+
+        coin_id = moneda.get(
+            "id"
+        )
+
+        simbolo = str(
+            moneda.get(
+                "symbol",
+                ""
+            )
+        ).lower()
+
+        precio = moneda.get(
+            "current_price"
+        )
+
+        market_cap = (
+            moneda.get(
+                "market_cap"
+            )
+            or 0
+        )
+
+        volumen = (
+            moneda.get(
+                "total_volume"
+            )
+            or 0
+        )
+
+        cambio_1h = (
+            moneda.get(
+                "price_change_percentage_1h_in_currency"
+            )
+        )
+
+        cambio_24h = (
+            moneda.get(
+                "price_change_percentage_24h_in_currency"
+            )
+        )
+
+        cambio_7d = (
+            moneda.get(
+                "price_change_percentage_7d_in_currency"
+            )
+        )
+
+        sparkline = (
+            moneda
+            .get(
+                "sparkline_in_7d",
+                {}
+            )
+            .get(
+                "price",
+                []
+            )
+        )
+
+        # ----------------------------------------------------
+        # FILTROS
+        # ----------------------------------------------------
+
+        if coin_id in ids_fijos:
+
+            continue
+
+        if simbolo in STABLECOINS:
+
+            continue
+
+        if not precio:
+
+            continue
+
+        if cambio_24h is None:
+
+            continue
+
+        # Evitamos monedas excesivamente pequeñas.
+
+        if market_cap < 500_000_000:
+
+            continue
+
+        # Necesitamos liquidez real.
+
+        if volumen < 50_000_000:
+
+            continue
+
+        # Queremos movimiento.
+
+        if abs(cambio_24h) < 3:
+
+            continue
+
+        rsi = calcular_rsi(
+            sparkline
+        )
+
+        liquidez = calcular_liquidez(
+            volumen,
+            market_cap
+        )
+
+        if liquidez is None:
+
+            liquidez = 0
+
+        # ----------------------------------------------------
+        # PUNTUACIÓN
+        # ----------------------------------------------------
+
+        puntuacion = 0
+
+        # Movimiento principal
+
+        puntuacion += (
+            min(
+                abs(cambio_24h),
+                15
+            )
+            * 2.5
+        )
+
+        # Liquidez
+
+        puntuacion += min(
+            liquidez * 100,
+            12
+        )
+
+        # Momentum de 1 hora
+
+        if cambio_1h is not None:
+
+            puntuacion += (
+                max(
+                    min(
+                        cambio_1h,
+                        3
+                    ),
+                    -3
+                )
+                * 2
+            )
+
+        # Tendencia de 7 días
+
+        if cambio_7d is not None:
+
+            puntuacion += (
+                max(
+                    min(
+                        cambio_7d,
+                        15
+                    ),
+                    -15
+                )
+                * 0.4
+            )
+
+        # RSI saludable
+
+        if rsi is not None:
+
+            if 45 <= rsi <= 70:
+
+                puntuacion += 12
+
+            elif rsi < 35:
+
+                # También puede ser interesante
+                # si está en sobreventa.
+
+                puntuacion += 8
+
+            elif rsi > 80:
+
+                # Penalizamos sobrecompra extrema.
+
+                puntuacion -= 12
+
+        # Penalizamos pumps demasiado extremos
+        # que comienzan a perder fuerza.
+
+        if (
+            cambio_24h > 20
+            and (
+                cambio_1h is None
+                or cambio_1h < 0
+            )
+        ):
+
+            puntuacion -= 10
+
+        candidatos.append(
+            (
+                puntuacion,
+                moneda,
+                rsi
+            )
+        )
+
+    if not candidatos:
+
+        print(
+            "No se encontró "
+            "una sexta moneda adecuada."
+        )
+
+        return None
+
+    candidatos.sort(
+        key=lambda x: x[0],
+        reverse=True
     )
 
-    distancia_soporte = (
-        (precio - minimo_24h)
-        / precio
+    puntuacion, seleccionada, rsi = (
+        candidatos[0]
     )
 
-    cerca_soporte = (
-        distancia_soporte <= 0.02
+    print(
+        "Sexta moneda seleccionada: "
+        f"{str(seleccionada.get('symbol', '')).upper()} "
+        f"{seleccionada.get('name', '')} "
+        f"(score {puntuacion:.1f})"
     )
 
-    distancia_resistencia = (
-        (maximo_24h - precio)
-        / precio
+    if rsi is not None:
+
+        print(
+            f"RSI candidata: {rsi:.2f}"
+        )
+
+    return seleccionada
+
+
+# ============================================================
+# ANALIZAR MONEDA
+# ============================================================
+
+def analizar_moneda(
+    moneda
+):
+
+    coin_id = moneda.get(
+        "id"
     )
 
-    cerca_resistencia = (
-        distancia_resistencia <= 0.01
+    simbolo = str(
+        moneda.get(
+            "symbol",
+            ""
+        )
+    ).upper()
+
+    nombre = moneda.get(
+        "name",
+        simbolo
     )
 
-    volumen_fuerte = (
-        ratio_volumen is not None
-        and ratio_volumen >= 1.5
+    precio = moneda.get(
+        "current_price"
     )
 
-    volumen_muy_fuerte = (
-        ratio_volumen is not None
-        and ratio_volumen >= 2.0
+    cambio_1h = moneda.get(
+        "price_change_percentage_1h_in_currency"
+    )
+
+    cambio_24h = moneda.get(
+        "price_change_percentage_24h_in_currency"
+    )
+
+    cambio_7d = moneda.get(
+        "price_change_percentage_7d_in_currency"
+    )
+
+    volumen = (
+        moneda.get(
+            "total_volume"
+        )
+        or 0
+    )
+
+    market_cap = (
+        moneda.get(
+            "market_cap"
+        )
+        or 0
+    )
+
+    high_24h = moneda.get(
+        "high_24h"
+    )
+
+    low_24h = moneda.get(
+        "low_24h"
+    )
+
+    sparkline = (
+        moneda
+        .get(
+            "sparkline_in_7d",
+            {}
+        )
+        .get(
+            "price",
+            []
+        )
+    )
+
+    if precio is None:
+
+        return None
+
+    if cambio_24h is None:
+
+        return None
+
+    # --------------------------------------------------------
+    # RSI
+    # --------------------------------------------------------
+
+    rsi = calcular_rsi(
+        sparkline
+    )
+
+    # --------------------------------------------------------
+    # RANGO RECIENTE
+    # --------------------------------------------------------
+
+    if len(sparkline) >= 24:
+
+        ultimos = sparkline[-24:]
+
+    elif sparkline:
+
+        ultimos = sparkline
+
+    else:
+
+        ultimos = [
+            precio
+        ]
+
+    soporte = min(
+        ultimos
+    )
+
+    resistencia = max(
+        ultimos
+    )
+
+    promedio = (
+        sum(ultimos)
+        / len(ultimos)
+    )
+
+    # --------------------------------------------------------
+    # SOPORTE
+    # --------------------------------------------------------
+
+    cerca_soporte = False
+
+    if precio > 0:
+
+        distancia = (
+            precio - soporte
+        ) / precio
+
+        cerca_soporte = (
+            distancia <= 0.02
+        )
+
+    # --------------------------------------------------------
+    # RESISTENCIA
+    # --------------------------------------------------------
+
+    cerca_resistencia = False
+
+    if precio > 0:
+
+        distancia = (
+            resistencia - precio
+        ) / precio
+
+        cerca_resistencia = (
+            distancia <= 0.01
+        )
+
+    # --------------------------------------------------------
+    # LIQUIDEZ
+    # --------------------------------------------------------
+
+    liquidez = calcular_liquidez(
+        volumen,
+        market_cap
     )
 
     # ========================================================
-    # PUNTUACIÓN DE POSIBLE RECUPERACIÓN
+    # ESCENARIO DE RECUPERACIÓN
     # ========================================================
 
     puntuacion_caida = 0
@@ -661,6 +875,8 @@ def analizar_moneda(
             "caída 24h relevante"
         )
 
+    # RSI
+
     if rsi is not None:
 
         if rsi <= 30:
@@ -679,21 +895,7 @@ def analizar_moneda(
                 "RSI bajo"
             )
 
-    if volumen_muy_fuerte:
-
-        puntuacion_caida += 25
-
-        razones_caida.append(
-            "volumen muy alto"
-        )
-
-    elif volumen_fuerte:
-
-        puntuacion_caida += 15
-
-        razones_caida.append(
-            "volumen alto"
-        )
+    # Soporte
 
     if cerca_soporte:
 
@@ -703,8 +905,47 @@ def analizar_moneda(
             "precio cerca del soporte"
         )
 
+    # Rebote de 1h
+
+    if (
+        cambio_1h is not None
+        and cambio_1h > 0
+    ):
+
+        puntuacion_caida += 10
+
+        razones_caida.append(
+            "rebote positivo en 1h"
+        )
+
+    # Debilidad de 7 días
+
+    if (
+        cambio_7d is not None
+        and cambio_7d < -8
+    ):
+
+        puntuacion_caida += 10
+
+        razones_caida.append(
+            "tendencia 7d debilitada"
+        )
+
+    # Alta rotación
+
+    if (
+        liquidez is not None
+        and liquidez >= 0.10
+    ):
+
+        puntuacion_caida += 5
+
+        razones_caida.append(
+            "alta rotación de volumen"
+        )
+
     # ========================================================
-    # PUNTUACIÓN DE MOMENTUM
+    # MOMENTUM ALCISTA
     # ========================================================
 
     puntuacion_momentum = 0
@@ -735,21 +976,23 @@ def analizar_moneda(
             "movimiento alcista"
         )
 
-    if volumen_muy_fuerte:
+    # Movimiento 1h
 
-        puntuacion_momentum += 25
+    if cambio_1h is not None:
 
-        razones_momentum.append(
-            "volumen muy alto"
-        )
+        if cambio_1h >= 1:
 
-    elif volumen_fuerte:
+            puntuacion_momentum += 15
 
-        puntuacion_momentum += 15
+            razones_momentum.append(
+                "impulso positivo en 1h"
+            )
 
-        razones_momentum.append(
-            "volumen alto"
-        )
+        elif cambio_1h <= -2:
+
+            puntuacion_momentum -= 10
+
+    # RSI
 
     if rsi is not None:
 
@@ -769,28 +1012,55 @@ def analizar_moneda(
                 "RSI recuperándose"
             )
 
-    if precio > promedio_24h:
+        elif rsi > 75:
+
+            puntuacion_momentum -= 10
+
+            razones_momentum.append(
+                "RSI elevado"
+            )
+
+    # Precio sobre promedio
+
+    if precio > promedio:
 
         puntuacion_momentum += 10
 
         razones_momentum.append(
-            "precio sobre promedio 24h"
+            "precio sobre promedio reciente"
         )
+
+    # Resistencia
 
     if cerca_resistencia:
 
+        puntuacion_momentum += 5
+
+        razones_momentum.append(
+            "cerca de resistencia"
+        )
+
+    # Liquidez
+
+    if (
+        liquidez is not None
+        and liquidez >= 0.10
+    ):
+
         puntuacion_momentum += 10
 
         razones_momentum.append(
-            "precio cerca de resistencia"
+            "volumen/capitalización elevado"
         )
 
     # ========================================================
-    # DECISIÓN FINAL
+    # DECISIÓN
     # ========================================================
 
     tipo_alerta = None
+
     puntuacion = 0
+
     razones = []
 
     if (
@@ -799,57 +1069,65 @@ def analizar_moneda(
         >= puntuacion_momentum
     ):
 
-        tipo_alerta = "RECUPERACION"
+        tipo_alerta = (
+            "RECUPERACION"
+        )
 
-        puntuacion = puntuacion_caida
+        puntuacion = (
+            puntuacion_caida
+        )
 
-        razones = razones_caida
+        razones = (
+            razones_caida
+        )
 
     elif puntuacion_momentum >= 60:
 
-        tipo_alerta = "MOMENTUM"
+        tipo_alerta = (
+            "MOMENTUM"
+        )
 
-        puntuacion = puntuacion_momentum
+        puntuacion = (
+            puntuacion_momentum
+        )
 
-        razones = razones_momentum
+        razones = (
+            razones_momentum
+        )
 
     elif puntuacion_caida >= 50:
 
-        tipo_alerta = "ATENCION"
+        tipo_alerta = (
+            "ATENCION"
+        )
 
-        puntuacion = puntuacion_caida
+        puntuacion = (
+            puntuacion_caida
+        )
 
-        razones = razones_caida
+        razones = (
+            razones_caida
+        )
 
-    if tipo_alerta is None:
+    # ========================================================
+    # NIVEL
+    # ========================================================
 
-        return {
-            "coin_id": coin_id,
-            "simbolo": simbolo,
-            "nombre": nombre,
-            "alerta": None,
-            "nivel": None,
-            "puntuacion": 0,
-            "precio": precio,
-            "cambio_24h": cambio_24h,
-            "rsi": rsi,
-            "ratio_volumen": ratio_volumen,
-            "soporte": minimo_24h,
-            "resistencia": maximo_24h,
-            "razones": []
-        }
+    nivel = None
 
-    if puntuacion >= 75:
+    if tipo_alerta:
 
-        nivel = "FUERTE"
+        if puntuacion >= 75:
 
-    elif puntuacion >= 60:
+            nivel = "FUERTE"
 
-        nivel = "MODERADA"
+        elif puntuacion >= 60:
 
-    else:
+            nivel = "MODERADA"
 
-        nivel = "ATENCION"
+        else:
+
+            nivel = "ATENCION"
 
     return {
         "coin_id": coin_id,
@@ -859,11 +1137,17 @@ def analizar_moneda(
         "nivel": nivel,
         "puntuacion": puntuacion,
         "precio": precio,
+        "cambio_1h": cambio_1h,
         "cambio_24h": cambio_24h,
+        "cambio_7d": cambio_7d,
         "rsi": rsi,
-        "ratio_volumen": ratio_volumen,
-        "soporte": minimo_24h,
-        "resistencia": maximo_24h,
+        "volumen": volumen,
+        "market_cap": market_cap,
+        "liquidez": liquidez,
+        "soporte": soporte,
+        "resistencia": resistencia,
+        "low24": low_24h,
+        "high24": high_24h,
         "razones": razones
     }
 
@@ -872,7 +1156,13 @@ def analizar_moneda(
 # FORMATO DE PRECIO
 # ============================================================
 
-def formato_precio(precio):
+def formato_precio(
+    precio
+):
+
+    if precio is None:
+
+        return "N/D"
 
     if precio >= 1000:
 
@@ -886,7 +1176,7 @@ def formato_precio(precio):
 
 
 # ============================================================
-# CREAR MENSAJE
+# CREAR MENSAJE TELEGRAM
 # ============================================================
 
 def crear_mensaje(
@@ -897,469 +1187,72 @@ def crear_mensaje(
 
         return None
 
-    mensaje = [
+    lineas = [
         "🚨 BTC ALERT BOT",
         "",
-        f"🔎 {len(alertas)} alerta(s) nueva(s)",
-        "📊 Análisis técnico automático",
+        f"🔎 {len(alertas)} "
+        "alerta(s) nueva(s)",
+        "📊 Scanner técnico automático",
         ""
     ]
 
     for alerta in alertas:
 
-        simbolo = alerta["simbolo"]
-
-        if alerta["alerta"] == "RECUPERACION":
+        if (
+            alerta["alerta"]
+            == "RECUPERACION"
+        ):
 
             titulo = (
-                f"🟢 {simbolo} — "
+                f"🟢 {alerta['simbolo']} — "
                 "POSIBLE RECUPERACIÓN"
             )
 
-        elif alerta["alerta"] == "MOMENTUM":
+        elif (
+            alerta["alerta"]
+            == "MOMENTUM"
+        ):
 
             titulo = (
-                f"🚀 {simbolo} — "
+                f"🚀 {alerta['simbolo']} — "
                 "MOMENTUM ALCISTA"
             )
 
         else:
 
             titulo = (
-                f"🟠 {simbolo} — "
+                f"🟠 {alerta['simbolo']} — "
                 "ATENCIÓN"
             )
 
-        mensaje.append(
+        lineas.append(
             "━━━━━━━━━━━━━━"
         )
 
-        mensaje.append(
+        lineas.append(
             titulo
         )
 
-        mensaje.append(
-            f"Nivel: {alerta['nivel']}"
+        lineas.append(
+            f"Nivel: "
+            f"{alerta['nivel']}"
         )
 
-        mensaje.append(
+        lineas.append(
             f"Puntuación: "
             f"{alerta['puntuacion']}/100"
         )
 
-        mensaje.append(
+        lineas.append(
             f"💰 Precio: "
             f"{formato_precio(alerta['precio'])}"
         )
 
-        mensaje.append(
-            f"📈 24h: "
-            f"{alerta['cambio_24h']:+.2f}%"
-        )
-
-        if alerta["rsi"] is not None:
-
-            mensaje.append(
-                f"📊 RSI(14): "
-                f"{alerta['rsi']:.2f}"
-            )
-
-        else:
-
-            mensaje.append(
-                "📊 RSI(14): N/D"
-            )
-
-        if alerta["ratio_volumen"] is not None:
-
-            mensaje.append(
-                f"📦 Volumen: "
-                f"{alerta['ratio_volumen']:.2f}x promedio"
-            )
-
-        else:
-
-            mensaje.append(
-                "📦 Volumen: N/D"
-            )
-
-        mensaje.append(
-            f"📍 Soporte 24h: "
-            f"{formato_precio(alerta['soporte'])}"
-        )
-
-        mensaje.append(
-            f"📍 Resistencia 24h: "
-            f"{formato_precio(alerta['resistencia'])}"
-        )
-
-        if alerta["razones"]:
-
-            mensaje.append("")
-
-            mensaje.append(
-                "Motivos:"
-            )
-
-            for razon in alerta["razones"]:
-
-                mensaje.append(
-                    f"• {razon}"
-                )
-
-        mensaje.append("")
-
-        mensaje.append(
-            "⚠️ Señal técnica, "
-            "no recomendación de compra."
-        )
-
-    return "\n".join(
-        mensaje
-    )
-
-
-# ============================================================
-# PROGRAMA PRINCIPAL
-# ============================================================
-
-def main():
-
-    print(
-        "==================================="
-    )
-
-    print(
-        " BTC ALERT BOT - LABORATORIO"
-    )
-
-    print(
-        "==================================="
-    )
-
-    estado = cargar_estado()
-
-    # Seguridad adicional.
-    # Garantiza que siempre sea un diccionario.
-
-    ultima_alerta = estado.get(
-        "ultima_alerta"
-    )
-
-    if not isinstance(
-        ultima_alerta,
-        dict
-    ):
-
-        ultima_alerta = {}
-
-        estado["ultima_alerta"] = (
-            ultima_alerta
-        )
-
-    # --------------------------------------------------------
-    # OBTENER MERCADO
-    # --------------------------------------------------------
-
-    mercado = obtener_mercado()
-
-    # --------------------------------------------------------
-    # SEXTA MONEDA DINÁMICA
-    # --------------------------------------------------------
-
-    moneda_dinamica = (
-        seleccionar_moneda_dinamica(
-            mercado
-        )
-    )
-
-    monedas_a_analizar = []
-
-    # --------------------------------------------------------
-    # CINCO PRINCIPALES
-    # --------------------------------------------------------
-
-    for coin_id, simbolo in (
-        MONEDAS_PRINCIPALES.items()
-    ):
-
-        monedas_a_analizar.append(
-            (
-                coin_id,
-                simbolo
-            )
-        )
-
-    # --------------------------------------------------------
-    # SEXTA MONEDA
-    # --------------------------------------------------------
-
-    if moneda_dinamica:
-
-        coin_id = moneda_dinamica.get(
-            "id"
-        )
-
-        simbolo = moneda_dinamica.get(
-            "symbol",
-            ""
-        ).upper()
-
-        monedas_a_analizar.append(
-            (
-                coin_id,
-                simbolo
-            )
-        )
-
-    # --------------------------------------------------------
-    # MERCADO POR ID
-    # --------------------------------------------------------
-
-    mercado_por_id = {}
-
-    for moneda in mercado:
-
-        coin_id = moneda.get(
-            "id"
-        )
-
-        if coin_id:
-
-            mercado_por_id[
-                coin_id
-            ] = moneda
-
-    nuevas_alertas = []
-
-    # --------------------------------------------------------
-    # ANALIZAR MONEDAS
-    # --------------------------------------------------------
-
-    for coin_id, simbolo in (
-        monedas_a_analizar
-    ):
-
-        print("")
-        print(
-            f"Analizando {simbolo}..."
-        )
-
-        datos = mercado_por_id.get(
-            coin_id
-        )
-
-        if not datos:
-
-            print(
-                f"No hay datos para "
-                f"{simbolo}."
-            )
-
-            continue
-
-        precio = datos.get(
-            "current_price"
-        )
-
-        cambio_24h = (
-            datos.get(
-                "price_change_percentage_24h"
-            )
-            or 0
-        )
-
-        volumen_24h = (
-            datos.get(
-                "total_volume"
-            )
-            or 0
-        )
-
-        nombre = datos.get(
-            "name",
-            simbolo
-        )
-
-        if precio is None:
-
-            print(
-                f"Precio no disponible "
-                f"para {simbolo}."
-            )
-
-            continue
-
-        precios, volumenes = (
-            obtener_historico(
-                coin_id
-            )
-        )
-
-        resultado = analizar_moneda(
-            coin_id,
-            simbolo,
-            nombre,
-            precio,
-            cambio_24h,
-            volumen_24h,
-            precios,
-            volumenes
-        )
-
-        if not resultado:
-
-            print(
-                f"No fue posible analizar "
-                f"{simbolo}."
-            )
-
-            continue
-
-        # ----------------------------------------------------
-        # SIN ALERTA
-        # ----------------------------------------------------
-
-        if resultado["alerta"] is None:
-
-            print(
-                f"{simbolo}: SIN ALERTA"
-            )
-
-            # MUY IMPORTANTE:
-            # Al desaparecer una alerta,
-            # reiniciamos su memoria.
-            # Así podrá volver a alertar
-            # cuando aparezca una nueva señal.
-
-            ultima_alerta[simbolo] = None
-
-            continue
-
-        # ----------------------------------------------------
-        # ALERTA DETECTADA
-        # ----------------------------------------------------
-
-        tipo = resultado["alerta"]
-
-        nivel = resultado["nivel"]
-
-        identificador = (
-            f"{tipo}_{nivel}"
-        )
-
-        anterior = (
-            ultima_alerta.get(
-                simbolo
-            )
-        )
-
-        print(
-            f"{simbolo}: "
-            f"{tipo} "
-            f"{nivel} "
-            f"{resultado['puntuacion']}/100"
-        )
-
-        # ----------------------------------------------------
-        # EVITAR REPETICIONES
-        # ----------------------------------------------------
-
-        if identificador != anterior:
-
-            nuevas_alertas.append(
-                resultado
-            )
-
-            ultima_alerta[simbolo] = (
-                identificador
-            )
-
-            print(
-                f"Nueva alerta: "
-                f"{simbolo}"
-            )
-
-        else:
-
-            print(
-                f"{simbolo}: "
-                "alerta ya enviada. "
-                "No se repite."
-            )
-
-    # --------------------------------------------------------
-    # GUARDAR MEMORIA
-    # --------------------------------------------------------
-
-    estado["ultima_alerta"] = (
-        ultima_alerta
-    )
-
-    guardar_estado(
-        estado
-    )
-
-    # --------------------------------------------------------
-    # ENVIAR ALERTAS
-    # --------------------------------------------------------
-
-    if nuevas_alertas:
-
-        mensaje = crear_mensaje(
-            nuevas_alertas
-        )
-
-        enviado = enviar_telegram(
-            mensaje
-        )
-
-        if enviado:
-
-            print(
-                f"Se enviaron "
-                f"{len(nuevas_alertas)} "
-                "alerta(s)."
-            )
-
-        else:
-
-            print(
-                "No fue posible enviar "
-                "las alertas a Telegram."
-            )
-
-    else:
-
-        print(
-            "No hay alertas nuevas."
-        )
-
-    print("")
-    print(
-        "Análisis completado correctamente."
-    )
-
-
-# ============================================================
-# EJECUCIÓN
-# ============================================================
-
-if __name__ == "__main__":
-
-    try:
-
-        main()
-
-    except Exception as error:
-
-        print("")
-        print(
-            "ERROR CRÍTICO:"
-        )
-
-        print(
-            str(error)
-        )
-
-        raise
+        if (
+            alerta["cambio_1h"]
+            is not None
+        ):
+
+            lineas.append(
+                f"⚡ 1h: "
+                f"{alerta['cambio_1h']:+.2
