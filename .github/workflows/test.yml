@@ -3,7 +3,7 @@ name: Probar BTC Alert Bot
   on:
   workflow_dispatch:
   schedule:
-    - cron: "*/30 * * * *":
+    - cron: "*/30 * * * *"
 
 jobs:
   test:
