@@ -4,7 +4,10 @@ import requests
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-BINANCE_URL = "https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT"
+COINGECKO_URL = (
+    "https://api.coingecko.com/api/v3/simple/price"
+    "?ids=bitcoin&vs_currencies=usd&include_24hr_change=true"
+)
 
 
 def enviar_telegram(mensaje):
@@ -15,18 +18,27 @@ def enviar_telegram(mensaje):
         "text": mensaje
     }
 
-    respuesta = requests.post(url, data=datos, timeout=15)
+    respuesta = requests.post(
+        url,
+        data=datos,
+        timeout=15
+    )
+
     respuesta.raise_for_status()
 
 
 def obtener_bitcoin():
-    respuesta = requests.get(BINANCE_URL, timeout=15)
+    respuesta = requests.get(
+        COINGECKO_URL,
+        timeout=15
+    )
+
     respuesta.raise_for_status()
 
     datos = respuesta.json()
 
-    precio = float(datos["lastPrice"])
-    cambio = float(datos["priceChangePercent"])
+    precio = float(datos["bitcoin"]["usd"])
+    cambio = float(datos["bitcoin"]["usd_24h_change"])
 
     return precio, cambio
 
