@@ -1362,3 +1362,21 @@ def crear_mensaje(alertas):
         )
 
     return "\n".join(lineas)
+
+# ============================================================
+# EJECUTAR PROGRAMA
+# ============================================================
+
+if __name__ == "__main__":
+
+    try:
+
+        main()
+
+    except Exception as error:
+
+        print("")
+        print("ERROR CRÍTICO:")
+        print(str(error))
+
+        raise
