@@ -1179,80 +1179,186 @@ def formato_precio(
 # CREAR MENSAJE TELEGRAM
 # ============================================================
 
-def crear_mensaje(
-    alertas
-):
+def crear_mensaje(alertas):
 
     if not alertas:
-
         return None
 
     lineas = [
         "🚨 BTC ALERT BOT",
         "",
-        f"🔎 {len(alertas)} "
-        "alerta(s) nueva(s)",
+        "🔎 {} alerta(s) nueva(s)".format(
+            len(alertas)
+        ),
         "📊 Scanner técnico automático",
         ""
     ]
 
     for alerta in alertas:
 
-        if (
-            alerta["alerta"]
-            == "RECUPERACION"
-        ):
+        tipo = alerta.get("alerta")
+
+        if tipo == "RECUPERACION":
 
             titulo = (
-                f"🟢 {alerta['simbolo']} — "
-                "POSIBLE RECUPERACIÓN"
+                "🟢 {} — POSIBLE RECUPERACIÓN"
+                .format(alerta["simbolo"])
             )
 
-        elif (
-            alerta["alerta"]
-            == "MOMENTUM"
-        ):
+        elif tipo == "MOMENTUM":
 
             titulo = (
-                f"🚀 {alerta['simbolo']} — "
-                "MOMENTUM ALCISTA"
+                "🚀 {} — MOMENTUM ALCISTA"
+                .format(alerta["simbolo"])
             )
 
         else:
 
             titulo = (
-                f"🟠 {alerta['simbolo']} — "
-                "ATENCIÓN"
+                "🟠 {} — ATENCIÓN"
+                .format(alerta["simbolo"])
             )
 
         lineas.append(
             "━━━━━━━━━━━━━━"
         )
 
+        lineas.append(titulo)
+
         lineas.append(
-            titulo
+            "Nivel: {}".format(
+                alerta["nivel"]
+            )
         )
 
         lineas.append(
-            f"Nivel: "
-            f"{alerta['nivel']}"
+            "Puntuación: {}/100".format(
+                alerta["puntuacion"]
+            )
         )
 
         lineas.append(
-            f"Puntuación: "
-            f"{alerta['puntuacion']}/100"
+            "💰 Precio: {}".format(
+                formato_precio(
+                    alerta["precio"]
+                )
+            )
         )
 
-        lineas.append(
-            f"💰 Precio: "
-            f"{formato_precio(alerta['precio'])}"
+        cambio_1h = alerta.get(
+            "cambio_1h"
         )
 
-        if (
-            alerta["cambio_1h"]
-            is not None
-        ):
+        if cambio_1h is not None:
 
             lineas.append(
-                f"⚡ 1h: "
-                f"{alerta['cambio_1h']:+.2
+                "⚡ 1h: {:+.2f}%".format(
+                    cambio_1h
+                )
+            )
+
+        cambio_24h = alerta.get(
+            "cambio_24h"
+        )
+
+        if cambio_24h is not None:
+
+            lineas.append(
+                "📈 24h: {:+.2f}%".format(
+                    cambio_24h
+                )
+            )
+
+        cambio_7d = alerta.get(
+            "cambio_7d"
+        )
+
+        if cambio_7d is not None:
+
+            lineas.append(
+                "📅 7d: {:+.2f}%".format(
+                    cambio_7d
+                )
+            )
+
+        rsi = alerta.get(
+            "rsi"
+        )
+
+        if rsi is not None:
+
+            lineas.append(
+                "📊 RSI(14): {:.2f}".format(
+                    rsi
+                )
+            )
+
+        volumen = alerta.get(
+            "volumen"
+        )
+
+        if volumen:
+
+            lineas.append(
+                "📦 Volumen 24h: ${:,.0f}".format(
+                    volumen
+                )
+            )
+
+        liquidez = alerta.get(
+            "liquidez"
+        )
+
+        if liquidez is not None:
+
+            lineas.append(
+                "💧 Volumen/Cap: {:.1f}%".format(
+                    liquidez * 100
+                )
+            )
+
+        lineas.append(
+            "📍 Soporte: {}".format(
+                formato_precio(
+                    alerta["soporte"]
+                )
+            )
+        )
+
+        lineas.append(
+            "📍 Resistencia: {}".format(
+                formato_precio(
+                    alerta["resistencia"]
+                )
+            )
+        )
+
+        razones = alerta.get(
+            "razones",
+            []
+        )
+
+        if razones:
+
+            lineas.append("")
+
+            lineas.append(
+                "Motivos:"
+            )
+
+            for razon in razones:
+
+                lineas.append(
+                    "• {}".format(
+                        razon
+                    )
+                )
+
+        lineas.append("")
+
+        lineas.append(
+            "⚠️ Señal técnica, "
+            "no recomendación de compra."
+        )
+
+    return "\n".join(lineas)
