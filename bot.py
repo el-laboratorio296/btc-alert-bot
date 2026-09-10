@@ -1,14 +1,13 @@
 import os
 import json
 import time
-import math
 import statistics
 import requests
 
 
 # ============================================================
-# EL LABORATORIO - CRYPTO ALERT BOT
-# VERSIÓN 4.0
+# 🧪 EL LABORATORIO - CRYPTO ALERT BOT
+# VERSIÓN 4.1 - SCORE LABORATORIO CALIBRADO
 # ============================================================
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -21,12 +20,12 @@ MARKETS_URL = (
 )
 
 HEADERS = {
-    "User-Agent": "BTC-Alert-Laboratorio/4.0"
+    "User-Agent": "BTC-Alert-Laboratorio/4.1"
 }
 
 
 # ============================================================
-# CONFIGURACIÓN DEL SISTEMA
+# 5 CRIPTOMONEDAS PRINCIPALES
 # ============================================================
 
 MONEDAS_PRINCIPALES = {
@@ -37,6 +36,10 @@ MONEDAS_PRINCIPALES = {
     "ripple": "XRP",
 }
 
+
+# ============================================================
+# STABLECOINS EXCLUIDAS
+# ============================================================
 
 STABLECOINS = {
     "usdt",
@@ -144,14 +147,17 @@ def enviar_telegram(mensaje):
 
         respuesta.raise_for_status()
 
-        print("Mensaje enviado a Telegram.")
+        print(
+            "Mensaje enviado a Telegram."
+        )
 
         return True
 
     except requests.RequestException as error:
 
         print(
-            f"Error enviando Telegram: {error}"
+            f"Error enviando Telegram: "
+            f"{error}"
         )
 
         return False
@@ -169,7 +175,9 @@ def cargar_estado():
 
     if not os.path.exists(STATE_FILE):
 
-        print("No existe memoria anterior.")
+        print(
+            "No existe memoria anterior."
+        )
 
         return estado_defecto
 
@@ -181,9 +189,14 @@ def cargar_estado():
             encoding="utf-8"
         ) as archivo:
 
-            estado = json.load(archivo)
+            estado = json.load(
+                archivo
+            )
 
-        if not isinstance(estado, dict):
+        if not isinstance(
+            estado,
+            dict
+        ):
 
             return estado_defecto
 
@@ -199,7 +212,8 @@ def cargar_estado():
     except Exception as error:
 
         print(
-            f"Error leyendo memoria: {error}"
+            f"Error leyendo memoria: "
+            f"{error}"
         )
 
         return estado_defecto
@@ -222,12 +236,15 @@ def guardar_estado(estado):
                 ensure_ascii=False
             )
 
-        print("Memoria guardada correctamente.")
+        print(
+            "Memoria guardada correctamente."
+        )
 
     except Exception as error:
 
         print(
-            f"Error guardando memoria: {error}"
+            f"Error guardando memoria: "
+            f"{error}"
         )
 
 
@@ -257,7 +274,8 @@ def obtener_mercado():
     if not datos:
 
         raise Exception(
-            "No fue posible obtener el mercado."
+            "No fue posible obtener "
+            "el mercado."
         )
 
     print(
@@ -287,7 +305,10 @@ def calcular_rsi(
 
     cambios = []
 
-    for i in range(1, len(precios)):
+    for i in range(
+        1,
+        len(precios)
+    ):
 
         cambios.append(
             precios[i] - precios[i - 1]
@@ -304,16 +325,23 @@ def calcular_rsi(
     ]
 
     promedio_ganancia = (
-        sum(ganancias[:periodo])
+        sum(
+            ganancias[:periodo]
+        )
         / periodo
     )
 
     promedio_perdida = (
-        sum(perdidas[:periodo])
+        sum(
+            perdidas[:periodo]
+        )
         / periodo
     )
 
-    for i in range(periodo, len(cambios)):
+    for i in range(
+        periodo,
+        len(cambios)
+    ):
 
         promedio_ganancia = (
             (
@@ -350,10 +378,14 @@ def calcular_rsi(
 
 
 # ============================================================
-# UTILIDADES MATEMÁTICAS
+# UTILIDADES
 # ============================================================
 
-def limitar(valor, minimo, maximo):
+def limitar(
+    valor,
+    minimo,
+    maximo
+):
 
     return max(
         minimo,
@@ -397,13 +429,20 @@ def dinero(valor):
 
 def calcular_volatilidad(precios):
 
-    if not precios or len(precios) < 10:
+    if not precios:
+
+        return None
+
+    if len(precios) < 10:
 
         return None
 
     retornos = []
 
-    for i in range(1, len(precios)):
+    for i in range(
+        1,
+        len(precios)
+    ):
 
         anterior = precios[i - 1]
         actual = precios[i]
@@ -417,7 +456,9 @@ def calcular_volatilidad(precios):
             / anterior
         ) * 100
 
-        retornos.append(retorno)
+        retornos.append(
+            retorno
+        )
 
     if len(retornos) < 5:
 
@@ -425,7 +466,9 @@ def calcular_volatilidad(precios):
 
     try:
 
-        return statistics.pstdev(retornos)
+        return statistics.pstdev(
+            retornos
+        )
 
     except Exception:
 
@@ -436,7 +479,9 @@ def calcular_volatilidad(precios):
 # SELECCIÓN DE LA SEXTA MONEDA
 # ============================================================
 
-def seleccionar_moneda_dinamica(mercado):
+def seleccionar_moneda_dinamica(
+    mercado
+):
 
     candidatos = []
 
@@ -446,10 +491,15 @@ def seleccionar_moneda_dinamica(mercado):
 
     for moneda in mercado:
 
-        coin_id = moneda.get("id")
+        coin_id = moneda.get(
+            "id"
+        )
 
         simbolo = str(
-            moneda.get("symbol", "")
+            moneda.get(
+                "symbol",
+                ""
+            )
         ).lower()
 
         precio = moneda.get(
@@ -457,12 +507,16 @@ def seleccionar_moneda_dinamica(mercado):
         )
 
         market_cap = (
-            moneda.get("market_cap")
+            moneda.get(
+                "market_cap"
+            )
             or 0
         )
 
         volumen = (
-            moneda.get("total_volume")
+            moneda.get(
+                "total_volume"
+            )
             or 0
         )
 
@@ -518,7 +572,9 @@ def seleccionar_moneda_dinamica(mercado):
             )
         )
 
-        rsi = calcular_rsi(precios)
+        rsi = calcular_rsi(
+            precios
+        )
 
         if market_cap > 0:
 
@@ -653,7 +709,7 @@ def seleccionar_moneda_dinamica(mercado):
 
 
 # ============================================================
-# SCORE LABORATORIO
+# 🧪 SCORE LABORATORIO 0-100
 # ============================================================
 
 def calcular_score_laboratorio(
@@ -683,73 +739,97 @@ def calcular_score_laboratorio(
     )
 
     volumen = (
-        moneda.get("total_volume")
+        moneda.get(
+            "total_volume"
+        )
         or 0
     )
 
     market_cap = (
-        moneda.get("market_cap")
+        moneda.get(
+            "market_cap"
+        )
         or 0
     )
 
     # ========================================================
-    # 1. TENDENCIA - 20 PUNTOS
+    # 1. TENDENCIA — 20
     # ========================================================
 
     tendencia = 0
 
     if cambio_7d is not None:
 
-        if cambio_7d >= 15:
+        if cambio_7d <= -10:
 
-            tendencia += 12
+            tendencia += 0
 
-        elif cambio_7d >= 8:
-
-            tendencia += 10
-
-        elif cambio_7d >= 4:
-
-            tendencia += 8
-
-        elif cambio_7d >= 1:
-
-            tendencia += 6
-
-        elif cambio_7d >= -2:
-
-            tendencia += 4
-
-        elif cambio_7d >= -6:
+        elif cambio_7d <= -5:
 
             tendencia += 2
 
-    if precio is not None and promedio > 0:
+        elif cambio_7d <= -2:
 
-        diferencia_promedio = (
+            tendencia += 4
+
+        elif cambio_7d < 0:
+
+            tendencia += 5
+
+        elif cambio_7d < 2:
+
+            tendencia += 7
+
+        elif cambio_7d < 5:
+
+            tendencia += 9
+
+        elif cambio_7d < 10:
+
+            tendencia += 11
+
+        elif cambio_7d < 20:
+
+            tendencia += 13
+
+        else:
+
+            tendencia += 15
+
+    if precio and promedio:
+
+        diferencia = (
             (precio - promedio)
             / promedio
         ) * 100
 
-        if diferencia_promedio >= 5:
+        if diferencia <= -5:
+
+            tendencia += 0
+
+        elif diferencia <= -2:
+
+            tendencia += 2
+
+        elif diferencia < 0:
+
+            tendencia += 4
+
+        elif diferencia < 1:
+
+            tendencia += 6
+
+        elif diferencia < 3:
 
             tendencia += 8
 
-        elif diferencia_promedio >= 2:
+        elif diferencia < 5:
 
-            tendencia += 7
-
-        elif diferencia_promedio >= 0:
-
-            tendencia += 5
-
-        elif diferencia_promedio >= -3:
-
-            tendencia += 3
+            tendencia += 9
 
         else:
 
-            tendencia += 1
+            tendencia += 10
 
     tendencia = limitar(
         tendencia,
@@ -758,54 +838,74 @@ def calcular_score_laboratorio(
     )
 
     # ========================================================
-    # 2. MOMENTUM - 15 PUNTOS
+    # 2. MOMENTUM — 15
     # ========================================================
 
     momentum = 0
 
     if cambio_1h is not None:
 
-        if cambio_1h >= 2:
+        if cambio_1h <= -3:
 
-            momentum += 8
+            momentum += 0
 
-        elif cambio_1h >= 1:
-
-            momentum += 7
-
-        elif cambio_1h >= 0.3:
-
-            momentum += 5
-
-        elif cambio_1h >= 0:
-
-            momentum += 3
-
-        elif cambio_1h >= -1:
+        elif cambio_1h <= -1:
 
             momentum += 1
 
-    if cambio_24h is not None:
+        elif cambio_1h < 0:
 
-        if cambio_24h >= 10:
+            momentum += 3
 
-            momentum += 7
+        elif cambio_1h < 0.3:
 
-        elif cambio_24h >= 5:
+            momentum += 5
+
+        elif cambio_1h < 0.7:
 
             momentum += 6
 
-        elif cambio_24h >= 3:
+        elif cambio_1h < 1.5:
 
-            momentum += 5
+            momentum += 7
 
-        elif cambio_24h >= 0:
+        else:
+
+            momentum += 8
+
+    if cambio_24h is not None:
+
+        if cambio_24h <= -10:
+
+            momentum += 0
+
+        elif cambio_24h <= -5:
+
+            momentum += 1
+
+        elif cambio_24h < 0:
+
+            momentum += 2
+
+        elif cambio_24h < 2:
 
             momentum += 3
 
-        elif cambio_24h >= -3:
+        elif cambio_24h < 4:
 
-            momentum += 1
+            momentum += 4
+
+        elif cambio_24h < 7:
+
+            momentum += 5
+
+        elif cambio_24h < 12:
+
+            momentum += 6
+
+        else:
+
+            momentum += 7
 
     momentum = limitar(
         momentum,
@@ -814,36 +914,40 @@ def calcular_score_laboratorio(
     )
 
     # ========================================================
-    # 3. RSI - 15 PUNTOS
+    # 3. RSI — 15
     # ========================================================
 
     rsi_score = 0
 
     if rsi is not None:
 
-        if 52 <= rsi <= 68:
+        if 52 <= rsi <= 65:
 
             rsi_score = 15
 
         elif 48 <= rsi < 52:
 
-            rsi_score = 12
+            rsi_score = 13
 
-        elif 68 < rsi <= 72:
+        elif 65 < rsi <= 70:
 
-            rsi_score = 12
+            rsi_score = 13
 
-        elif 40 <= rsi < 48:
+        elif 42 <= rsi < 48:
+
+            rsi_score = 10
+
+        elif 70 < rsi <= 74:
+
+            rsi_score = 10
+
+        elif 30 <= rsi < 42:
 
             rsi_score = 8
 
-        elif 72 < rsi <= 78:
+        elif 74 < rsi <= 78:
 
-            rsi_score = 7
-
-        elif 30 <= rsi < 40:
-
-            rsi_score = 7
+            rsi_score = 6
 
         elif rsi < 30:
 
@@ -854,7 +958,7 @@ def calcular_score_laboratorio(
             rsi_score = 2
 
     # ========================================================
-    # 4. VOLUMEN - 15 PUNTOS
+    # 4. VOLUMEN — 15
     # ========================================================
 
     volumen_score = 0
@@ -870,91 +974,85 @@ def calcular_score_laboratorio(
 
         rotacion = 0
 
-    if volumen >= 1_000_000_000:
+    if rotacion < 0.01:
 
-        volumen_score += 8
+        volumen_score = 2
 
-    elif volumen >= 500_000_000:
+    elif rotacion < 0.03:
 
-        volumen_score += 7
+        volumen_score = 5
 
-    elif volumen >= 200_000_000:
+    elif rotacion < 0.05:
 
-        volumen_score += 6
+        volumen_score = 7
 
-    elif volumen >= 100_000_000:
+    elif rotacion < 0.08:
 
-        volumen_score += 5
+        volumen_score = 9
 
-    elif volumen >= 50_000_000:
+    elif rotacion < 0.12:
 
-        volumen_score += 3
+        volumen_score = 11
 
-    if rotacion >= 0.30:
+    elif rotacion < 0.20:
 
-        volumen_score += 7
+        volumen_score = 13
 
-    elif rotacion >= 0.20:
+    elif rotacion < 0.35:
 
-        volumen_score += 6
-
-    elif rotacion >= 0.10:
-
-        volumen_score += 5
-
-    elif rotacion >= 0.05:
-
-        volumen_score += 3
+        volumen_score = 14
 
     else:
 
-        volumen_score += 1
-
-    volumen_score = limitar(
-        volumen_score,
-        0,
-        15
-    )
+        volumen_score = 15
 
     # ========================================================
-    # 5. SOPORTE - 15 PUNTOS
+    # 5. SOPORTE — 15
     # ========================================================
 
     soporte_score = 0
 
     if precio and soporte:
 
-        distancia = (
+        distancia_soporte = (
             (precio - soporte)
             / precio
         ) * 100
 
-        if distancia <= 1:
+        if distancia_soporte <= 0.5:
 
             soporte_score = 15
 
-        elif distancia <= 2:
+        elif distancia_soporte <= 1:
 
-            soporte_score = 13
+            soporte_score = 14
 
-        elif distancia <= 3:
+        elif distancia_soporte <= 2:
 
-            soporte_score = 11
+            soporte_score = 12
 
-        elif distancia <= 5:
+        elif distancia_soporte <= 3:
 
-            soporte_score = 8
+            soporte_score = 10
 
-        elif distancia <= 8:
+        elif distancia_soporte <= 5:
 
-            soporte_score = 5
+            soporte_score = 7
 
-        else:
+        elif distancia_soporte <= 8:
+
+            soporte_score = 4
+
+        elif distancia_soporte <= 12:
 
             soporte_score = 2
 
+        else:
+
+            soporte_score = 0
+
     # ========================================================
-    # 6. REBOTE - 10 PUNTOS
+    # 6. REBOTE — 10
     # ========================================================
 
     rebote_score = 0
@@ -963,19 +1061,37 @@ def calcular_score_laboratorio(
 
         if cambio_1h >= 2:
 
-            rebote_score += 6
+            rebote_score += 5
 
         elif cambio_1h >= 1:
 
-            rebote_score += 5
-
-        elif cambio_1h >= 0.3:
-
             rebote_score += 4
+
+        elif cambio_1h >= 0.5:
+
+            rebote_score += 3
 
         elif cambio_1h > 0:
 
             rebote_score += 2
+
+    if cambio_24h is not None:
+
+        if cambio_24h <= -10:
+
+            rebote_score += 2
+
+        elif cambio_24h <= -5:
+
+            rebote_score += 3
+
+        elif cambio_24h <= -3:
+
+            rebote_score += 2
+
+        elif cambio_24h < 0:
+
+            rebote_score += 1
 
     if precio and soporte:
 
@@ -986,11 +1102,15 @@ def calcular_score_laboratorio(
 
         if distancia_soporte <= 2:
 
-            rebote_score += 4
+            rebote_score += 3
 
         elif distancia_soporte <= 4:
 
             rebote_score += 2
+
+        elif distancia_soporte <= 6:
+
+            rebote_score += 1
 
     rebote_score = limitar(
         rebote_score,
@@ -999,33 +1119,35 @@ def calcular_score_laboratorio(
     )
 
     # ========================================================
-    # 7. LIQUIDEZ - 5 PUNTOS
+    # 7. LIQUIDEZ — 5
     # ========================================================
 
-    liquidez_score = 0
-
-    if rotacion >= 0.30:
+    if market_cap >= 50_000_000_000:
 
         liquidez_score = 5
 
-    elif rotacion >= 0.20:
+    elif market_cap >= 10_000_000_000:
 
         liquidez_score = 4
 
-    elif rotacion >= 0.10:
+    elif market_cap >= 5_000_000_000:
 
         liquidez_score = 3
 
-    elif rotacion >= 0.05:
+    elif market_cap >= 1_000_000_000:
 
         liquidez_score = 2
 
-    elif rotacion > 0:
+    elif market_cap >= 500_000_000:
 
         liquidez_score = 1
 
+    else:
+
+        liquidez_score = 0
+
     # ========================================================
-    # 8. RIESGO - 5 PUNTOS
+    # 8. RIESGO — 5
     # ========================================================
 
     riesgo_score = 5
@@ -1036,13 +1158,17 @@ def calcular_score_laboratorio(
 
             riesgo_score = 0
 
-        elif volatilidad >= 3:
+        elif volatilidad >= 4:
 
             riesgo_score = 1
 
-        elif volatilidad >= 2:
+        elif volatilidad >= 3:
 
             riesgo_score = 2
+
+        elif volatilidad >= 2:
+
+            riesgo_score = 3
 
         elif volatilidad >= 1:
 
@@ -1052,22 +1178,31 @@ def calcular_score_laboratorio(
 
             riesgo_score = 5
 
-    # RSI extremo reduce calidad de la señal
+    # RSI extremo
     if rsi is not None:
 
         if rsi >= 80:
 
-            riesgo_score = max(
-                0,
-                riesgo_score - 2
-            )
+            riesgo_score -= 2
+
+        elif rsi >= 75:
+
+            riesgo_score -= 1
 
         elif rsi <= 20:
 
-            riesgo_score = max(
-                0,
-                riesgo_score - 1
-            )
+            riesgo_score -= 1
+
+    # Movimiento vertical
+    if cambio_24h is not None:
+
+        if cambio_24h >= 25:
+
+            riesgo_score -= 2
+
+        elif cambio_24h >= 15:
+
+            riesgo_score -= 1
 
     riesgo_score = limitar(
         riesgo_score,
@@ -1107,7 +1242,10 @@ def calcular_score_laboratorio(
         "riesgo": riesgo_score
     }
 
-    return score_total, componentes
+    return (
+        score_total,
+        componentes
+    )
 
 
 # ============================================================
@@ -1120,23 +1258,31 @@ def obtener_nivel_score(score):
 
         return "EXCEPCIONAL"
 
-    if score >= 75:
+    if score >= 80:
 
         return "FUERTE"
+
+    if score >= 70:
+
+        return "BUENA SEÑAL"
 
     if score >= 60:
 
         return "INTERESANTE"
 
-    if score >= 40:
+    if score >= 50:
 
         return "OBSERVACION"
 
-    return "DEBIL"
+    if score >= 35:
+
+        return "DEBIL"
+
+    return "MUY DEBIL"
 
 
 # ============================================================
-# ICONO DEL SCORE
+# ICONO
 # ============================================================
 
 def obtener_icono_score(score):
@@ -1145,15 +1291,19 @@ def obtener_icono_score(score):
 
         return "🔥"
 
-    if score >= 75:
+    if score >= 80:
 
         return "🚀"
+
+    if score >= 70:
+
+        return "🟢"
 
     if score >= 60:
 
         return "🟢"
 
-    if score >= 40:
+    if score >= 50:
 
         return "🟡"
 
@@ -1164,7 +1314,9 @@ def obtener_icono_score(score):
 # ANALIZAR MONEDA
 # ============================================================
 
-def analizar_moneda(moneda):
+def analizar_moneda(
+    moneda
+):
 
     simbolo = str(
         moneda.get(
@@ -1192,6 +1344,20 @@ def analizar_moneda(moneda):
 
     cambio_7d = moneda.get(
         "price_change_percentage_7d_in_currency"
+    )
+
+    volumen = (
+        moneda.get(
+            "total_volume"
+        )
+        or 0
+    )
+
+    market_cap = (
+        moneda.get(
+            "market_cap"
+        )
+        or 0
     )
 
     high_24h = moneda.get(
@@ -1224,7 +1390,9 @@ def analizar_moneda(moneda):
 
     if not precios:
 
-        precios = [precio]
+        precios = [
+            precio
+        ]
 
     # ========================================================
     # RSI
@@ -1246,9 +1414,13 @@ def analizar_moneda(moneda):
 
         ultimos = precios
 
-    soporte = min(ultimos)
+    soporte = min(
+        ultimos
+    )
 
-    resistencia = max(ultimos)
+    resistencia = max(
+        ultimos
+    )
 
     promedio = (
         sum(ultimos)
@@ -1259,12 +1431,14 @@ def analizar_moneda(moneda):
     # VOLATILIDAD
     # ========================================================
 
-    volatilidad = calcular_volatilidad(
-        ultimos
+    volatilidad = (
+        calcular_volatilidad(
+            ultimos
+        )
     )
 
     # ========================================================
-    # SCORE LABORATORIO
+    # SCORE
     # ========================================================
 
     score, componentes = (
@@ -1288,7 +1462,7 @@ def analizar_moneda(moneda):
     )
 
     # ========================================================
-    # DISTANCIA AL SOPORTE
+    # DISTANCIA SOPORTE
     # ========================================================
 
     if precio > 0:
@@ -1303,7 +1477,7 @@ def analizar_moneda(moneda):
         distancia_soporte = 100
 
     # ========================================================
-    # DISTANCIA A RESISTENCIA
+    # DISTANCIA RESISTENCIA
     # ========================================================
 
     if precio > 0:
@@ -1321,16 +1495,6 @@ def analizar_moneda(moneda):
     # LIQUIDEZ
     # ========================================================
 
-    market_cap = (
-        moneda.get("market_cap")
-        or 0
-    )
-
-    volumen = (
-        moneda.get("total_volume")
-        or 0
-    )
-
     if market_cap > 0:
 
         liquidez = (
@@ -1343,24 +1507,18 @@ def analizar_moneda(moneda):
         liquidez = 0
 
     # ========================================================
-    # CLASIFICACIÓN
+    # RECUPERACIÓN
     # ========================================================
 
-    alerta = None
-
-    razones = []
-
-    # --------------------------------------------------------
-    # RECUPERACIÓN
-    # --------------------------------------------------------
-
     condiciones_recuperacion = 0
+
+    razones_recuperacion = []
 
     if cambio_24h <= -3:
 
         condiciones_recuperacion += 1
 
-        razones.append(
+        razones_recuperacion.append(
             "caída 24h relevante"
         )
 
@@ -1368,7 +1526,7 @@ def analizar_moneda(moneda):
 
         condiciones_recuperacion += 1
 
-        razones.append(
+        razones_recuperacion.append(
             "RSI bajo"
         )
 
@@ -1376,7 +1534,7 @@ def analizar_moneda(moneda):
 
         condiciones_recuperacion += 1
 
-        razones.append(
+        razones_recuperacion.append(
             "precio próximo al soporte"
         )
 
@@ -1384,13 +1542,13 @@ def analizar_moneda(moneda):
 
         condiciones_recuperacion += 1
 
-        razones.append(
+        razones_recuperacion.append(
             "rebote positivo en 1h"
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # MOMENTUM
-    # --------------------------------------------------------
+    # ========================================================
 
     condiciones_momentum = 0
 
@@ -1440,7 +1598,14 @@ def analizar_moneda(moneda):
     # DECISIÓN FINAL
     # ========================================================
 
-    # Primero buscamos recuperación.
+    alerta = None
+
+    razones = []
+
+    # --------------------------------------------------------
+    # RECUPERACIÓN
+    # --------------------------------------------------------
+
     if (
         score >= 70
         and condiciones_recuperacion >= 2
@@ -1449,9 +1614,14 @@ def analizar_moneda(moneda):
 
         alerta = "RECUPERACION"
 
-        razones = razones[:5]
+        razones = (
+            razones_recuperacion[:5]
+        )
 
-    # Después momentum.
+    # --------------------------------------------------------
+    # MOMENTUM
+    # --------------------------------------------------------
+
     elif (
         score >= 75
         and condiciones_momentum >= 3
@@ -1459,9 +1629,14 @@ def analizar_moneda(moneda):
 
         alerta = "MOMENTUM"
 
-        razones = razones_momentum[:5]
+        razones = (
+            razones_momentum[:5]
+        )
 
-    # Atención por debilidad.
+    # --------------------------------------------------------
+    # ATENCIÓN
+    # --------------------------------------------------------
+
     elif (
         score >= 60
         and (
@@ -1475,15 +1650,16 @@ def analizar_moneda(moneda):
 
         alerta = "ATENCION"
 
-        razones = []
-
         if cambio_24h <= -5:
 
             razones.append(
                 "caída 24h fuerte"
             )
 
-        if rsi is not None and rsi <= 30:
+        if (
+            rsi is not None
+            and rsi <= 30
+        ):
 
             razones.append(
                 "RSI en sobreventa"
@@ -1597,27 +1773,41 @@ def analizar_moneda(moneda):
 # MENSAJE TELEGRAM
 # ============================================================
 
-def construir_mensaje(resultado):
+def construir_mensaje(
+    resultado
+):
 
-    simbolo = resultado["simbolo"]
+    simbolo = resultado[
+        "simbolo"
+    ]
 
-    alerta = resultado["alerta"]
+    alerta = resultado[
+        "alerta"
+    ]
 
-    score = resultado["score"]
+    score = resultado[
+        "score"
+    ]
 
-    nivel = resultado["nivel"]
+    nivel = resultado[
+        "nivel"
+    ]
 
-    icono = resultado["icono"]
+    icono = resultado[
+        "icono"
+    ]
 
-    titulo = (
-        "RECUPERACION"
-        if alerta == "RECUPERACION"
-        else
-        "MOMENTUM"
-        if alerta == "MOMENTUM"
-        else
-        "ATENCION"
-    )
+    if alerta == "RECUPERACION":
+
+        titulo = "RECUPERACION"
+
+    elif alerta == "MOMENTUM":
+
+        titulo = "MOMENTUM"
+
+    else:
+
+        titulo = "ATENCION"
 
     componentes = resultado[
         "componentes"
@@ -1639,6 +1829,13 @@ def construir_mensaje(resultado):
             f"• {razon}\n"
         )
 
+    if not razones_texto:
+
+        razones_texto = (
+            "• Condiciones técnicas "
+            "combinadas\n"
+        )
+
     lectura_texto = ""
 
     for item in lectura[:4]:
@@ -1647,7 +1844,9 @@ def construir_mensaje(resultado):
             f"• {item}\n"
         )
 
-    rsi = resultado["rsi"]
+    rsi = resultado[
+        "rsi"
+    ]
 
     if rsi is None:
 
@@ -1696,7 +1895,8 @@ def construir_mensaje(resultado):
         f"{porcentaje(resultado['cambio_24h'])}\n"
         f"📅 7d: "
         f"{porcentaje(resultado['cambio_7d'])}\n"
-        f"📉 RSI: {rsi_texto}\n"
+        f"📉 RSI: "
+        f"{rsi_texto}\n"
         f"📦 Volumen: "
         f"${resultado['volumen']:,.0f}\n"
         f"💧 Liquidez: "
@@ -1752,7 +1952,8 @@ def main():
     )
 
     print(
-        "🧪 BTC ALERT BOT - EL LABORATORIO 4.0"
+        "🧪 BTC ALERT BOT - "
+        "EL LABORATORIO 4.1"
     )
 
     print(
@@ -1791,7 +1992,9 @@ def main():
 
         for moneda in mercado:
 
-            if moneda.get("id") == coin_id:
+            if moneda.get(
+                "id"
+            ) == coin_id:
 
                 monedas_a_analizar.append(
                     moneda
@@ -1826,7 +2029,8 @@ def main():
         ).upper()
 
         print(
-            f"\nAnalizando {simbolo}..."
+            f"\nAnalizando "
+            f"{simbolo}..."
         )
 
         try:
@@ -1903,8 +2107,10 @@ def main():
 
             continue
 
-        alerta_anterior = ultima_alerta.get(
-            simbolo
+        alerta_anterior = (
+            ultima_alerta.get(
+                simbolo
+            )
         )
 
         # ----------------------------------------------------
@@ -1915,7 +2121,8 @@ def main():
 
             print(
                 f"{simbolo}: "
-                f"{alerta} YA ENVIADA"
+                f"{alerta} "
+                "YA ENVIADA"
             )
 
             continue
@@ -1960,8 +2167,6 @@ def main():
             mensaje
         )
 
-        # Pequeña pausa para evitar
-        # demasiadas solicitudes seguidas.
         time.sleep(1)
 
     # --------------------------------------------------------
@@ -1973,7 +2178,7 @@ def main():
         print(
             f"Se enviaron "
             f"{len(nuevas_alertas)} "
-            f"alerta(s) nuevas."
+            "alerta(s) nuevas."
         )
 
     else:
