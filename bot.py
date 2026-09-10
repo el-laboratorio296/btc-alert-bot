@@ -1,11 +1,14 @@
 import os
 import json
 import time
+import math
+import statistics
 import requests
 
 
 # ============================================================
-# CONFIGURACIÓN
+# EL LABORATORIO - CRYPTO ALERT BOT
+# VERSIÓN 4.0
 # ============================================================
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -18,12 +21,12 @@ MARKETS_URL = (
 )
 
 HEADERS = {
-    "User-Agent": "BTC-Alert-Laboratorio/3.0"
+    "User-Agent": "BTC-Alert-Laboratorio/4.0"
 }
 
 
 # ============================================================
-# 5 CRIPTOMONEDAS PRINCIPALES
+# CONFIGURACIÓN DEL SISTEMA
 # ============================================================
 
 MONEDAS_PRINCIPALES = {
@@ -34,10 +37,6 @@ MONEDAS_PRINCIPALES = {
     "ripple": "XRP",
 }
 
-
-# ============================================================
-# STABLECOINS EXCLUIDAS
-# ============================================================
 
 STABLECOINS = {
     "usdt",
@@ -58,10 +57,7 @@ STABLECOINS = {
 
 def solicitar(url, params=None, intentos=3):
 
-    for intento in range(
-        1,
-        intentos + 1
-    ):
+    for intento in range(1, intentos + 1):
 
         try:
 
@@ -71,10 +67,6 @@ def solicitar(url, params=None, intentos=3):
                 headers=HEADERS,
                 timeout=30
             )
-
-            # ------------------------------------------------
-            # RATE LIMIT DE COINGECKO
-            # ------------------------------------------------
 
             if respuesta.status_code == 429:
 
@@ -91,9 +83,7 @@ def solicitar(url, params=None, intentos=3):
                         f"Esperando {espera} segundos..."
                     )
 
-                    time.sleep(
-                        espera
-                    )
+                    time.sleep(espera)
 
                     continue
 
@@ -124,17 +114,13 @@ def enviar_telegram(mensaje):
 
     if not TELEGRAM_BOT_TOKEN:
 
-        print(
-            "Falta TELEGRAM_BOT_TOKEN."
-        )
+        print("Falta TELEGRAM_BOT_TOKEN.")
 
         return False
 
     if not TELEGRAM_CHAT_ID:
 
-        print(
-            "Falta TELEGRAM_CHAT_ID."
-        )
+        print("Falta TELEGRAM_CHAT_ID.")
 
         return False
 
@@ -158,17 +144,14 @@ def enviar_telegram(mensaje):
 
         respuesta.raise_for_status()
 
-        print(
-            "Mensaje enviado a Telegram."
-        )
+        print("Mensaje enviado a Telegram.")
 
         return True
 
     except requests.RequestException as error:
 
         print(
-            f"Error enviando Telegram: "
-            f"{error}"
+            f"Error enviando Telegram: {error}"
         )
 
         return False
@@ -184,13 +167,9 @@ def cargar_estado():
         "ultima_alerta": {}
     }
 
-    if not os.path.exists(
-        STATE_FILE
-    ):
+    if not os.path.exists(STATE_FILE):
 
-        print(
-            "No existe memoria anterior."
-        )
+        print("No existe memoria anterior.")
 
         return estado_defecto
 
@@ -202,35 +181,25 @@ def cargar_estado():
             encoding="utf-8"
         ) as archivo:
 
-            estado = json.load(
-                archivo
-            )
+            estado = json.load(archivo)
 
-        if not isinstance(
-            estado,
-            dict
-        ):
+        if not isinstance(estado, dict):
 
             return estado_defecto
 
         if not isinstance(
-            estado.get(
-                "ultima_alerta"
-            ),
+            estado.get("ultima_alerta"),
             dict
         ):
 
-            estado[
-                "ultima_alerta"
-            ] = {}
+            estado["ultima_alerta"] = {}
 
         return estado
 
     except Exception as error:
 
         print(
-            f"Error leyendo memoria: "
-            f"{error}"
+            f"Error leyendo memoria: {error}"
         )
 
         return estado_defecto
@@ -253,15 +222,12 @@ def guardar_estado(estado):
                 ensure_ascii=False
             )
 
-        print(
-            "Memoria guardada correctamente."
-        )
+        print("Memoria guardada correctamente.")
 
     except Exception as error:
 
         print(
-            f"Error guardando memoria: "
-            f"{error}"
+            f"Error guardando memoria: {error}"
         )
 
 
@@ -291,8 +257,7 @@ def obtener_mercado():
     if not datos:
 
         raise Exception(
-            "No fue posible obtener "
-            "el mercado."
+            "No fue posible obtener el mercado."
         )
 
     print(
@@ -322,14 +287,10 @@ def calcular_rsi(
 
     cambios = []
 
-    for i in range(
-        1,
-        len(precios)
-    ):
+    for i in range(1, len(precios)):
 
         cambios.append(
-            precios[i]
-            - precios[i - 1]
+            precios[i] - precios[i - 1]
         )
 
     ganancias = [
@@ -343,23 +304,16 @@ def calcular_rsi(
     ]
 
     promedio_ganancia = (
-        sum(
-            ganancias[:periodo]
-        )
+        sum(ganancias[:periodo])
         / periodo
     )
 
     promedio_perdida = (
-        sum(
-            perdidas[:periodo]
-        )
+        sum(perdidas[:periodo])
         / periodo
     )
 
-    for i in range(
-        periodo,
-        len(cambios)
-    ):
+    for i in range(periodo, len(cambios)):
 
         promedio_ganancia = (
             (
@@ -396,12 +350,93 @@ def calcular_rsi(
 
 
 # ============================================================
+# UTILIDADES MATEMÁTICAS
+# ============================================================
+
+def limitar(valor, minimo, maximo):
+
+    return max(
+        minimo,
+        min(valor, maximo)
+    )
+
+
+def porcentaje(valor):
+
+    if valor is None:
+
+        return "N/D"
+
+    return f"{valor:+.2f}%"
+
+
+def dinero(valor):
+
+    if valor is None:
+
+        return "N/D"
+
+    if valor >= 1000:
+
+        return f"${valor:,.2f}"
+
+    if valor >= 1:
+
+        return f"${valor:,.4f}"
+
+    if valor >= 0.01:
+
+        return f"${valor:,.6f}"
+
+    return f"${valor:.8f}"
+
+
+# ============================================================
+# VOLATILIDAD
+# ============================================================
+
+def calcular_volatilidad(precios):
+
+    if not precios or len(precios) < 10:
+
+        return None
+
+    retornos = []
+
+    for i in range(1, len(precios)):
+
+        anterior = precios[i - 1]
+        actual = precios[i]
+
+        if anterior <= 0:
+
+            continue
+
+        retorno = (
+            (actual - anterior)
+            / anterior
+        ) * 100
+
+        retornos.append(retorno)
+
+    if len(retornos) < 5:
+
+        return None
+
+    try:
+
+        return statistics.pstdev(retornos)
+
+    except Exception:
+
+        return None
+
+
+# ============================================================
 # SELECCIÓN DE LA SEXTA MONEDA
 # ============================================================
 
-def seleccionar_moneda_dinamica(
-    mercado
-):
+def seleccionar_moneda_dinamica(mercado):
 
     candidatos = []
 
@@ -411,15 +446,10 @@ def seleccionar_moneda_dinamica(
 
     for moneda in mercado:
 
-        coin_id = moneda.get(
-            "id"
-        )
+        coin_id = moneda.get("id")
 
         simbolo = str(
-            moneda.get(
-                "symbol",
-                ""
-            )
+            moneda.get("symbol", "")
         ).lower()
 
         precio = moneda.get(
@@ -427,16 +457,12 @@ def seleccionar_moneda_dinamica(
         )
 
         market_cap = (
-            moneda.get(
-                "market_cap"
-            )
+            moneda.get("market_cap")
             or 0
         )
 
         volumen = (
-            moneda.get(
-                "total_volume"
-            )
+            moneda.get("total_volume")
             or 0
         )
 
@@ -451,10 +477,6 @@ def seleccionar_moneda_dinamica(
         cambio_7d = moneda.get(
             "price_change_percentage_7d_in_currency"
         )
-
-        # ----------------------------------------------------
-        # EXCLUSIONES
-        # ----------------------------------------------------
 
         if coin_id in ids_fijos:
 
@@ -472,27 +494,17 @@ def seleccionar_moneda_dinamica(
 
             continue
 
-        # Capitalización mínima
-
         if market_cap < 500_000_000:
 
             continue
-
-        # Volumen mínimo
 
         if volumen < 50_000_000:
 
             continue
 
-        # Movimiento mínimo
-
         if abs(cambio_24h) < 3:
 
             continue
-
-        # ----------------------------------------------------
-        # RSI DE LA CANDIDATA
-        # ----------------------------------------------------
 
         precios = (
             moneda
@@ -506,13 +518,7 @@ def seleccionar_moneda_dinamica(
             )
         )
 
-        rsi = calcular_rsi(
-            precios
-        )
-
-        # ----------------------------------------------------
-        # LIQUIDEZ
-        # ----------------------------------------------------
+        rsi = calcular_rsi(precios)
 
         if market_cap > 0:
 
@@ -525,14 +531,9 @@ def seleccionar_moneda_dinamica(
 
             liquidez = 0
 
-        # ----------------------------------------------------
-        # PUNTUACIÓN
-        # ----------------------------------------------------
-
         puntuacion = 0
 
-        # Movimiento
-
+        # Movimiento 24h
         puntuacion += (
             min(
                 abs(cambio_24h),
@@ -542,14 +543,12 @@ def seleccionar_moneda_dinamica(
         )
 
         # Liquidez
-
         puntuacion += min(
             liquidez * 100,
             12
         )
 
-        # Movimiento de 1 hora
-
+        # Movimiento 1h
         if cambio_1h is not None:
 
             puntuacion += (
@@ -563,8 +562,7 @@ def seleccionar_moneda_dinamica(
                 * 2
             )
 
-        # Tendencia 7 días
-
+        # Tendencia 7d
         if cambio_7d is not None:
 
             puntuacion += (
@@ -579,7 +577,6 @@ def seleccionar_moneda_dinamica(
             )
 
         # RSI
-
         if rsi is not None:
 
             if 45 <= rsi <= 70:
@@ -595,7 +592,6 @@ def seleccionar_moneda_dinamica(
                 puntuacion -= 12
 
         # Pump extremo perdiendo fuerza
-
         if (
             cambio_24h > 20
             and (
@@ -613,10 +609,6 @@ def seleccionar_moneda_dinamica(
             )
         )
 
-    # --------------------------------------------------------
-    # SIN CANDIDATOS
-    # --------------------------------------------------------
-
     if not candidatos:
 
         print(
@@ -625,10 +617,6 @@ def seleccionar_moneda_dinamica(
         )
 
         return None
-
-    # --------------------------------------------------------
-    # ORDENAR
-    # --------------------------------------------------------
 
     candidatos.sort(
         key=lambda x: x[0],
@@ -665,16 +653,518 @@ def seleccionar_moneda_dinamica(
 
 
 # ============================================================
+# SCORE LABORATORIO
+# ============================================================
+
+def calcular_score_laboratorio(
+    moneda,
+    precios,
+    rsi,
+    soporte,
+    resistencia,
+    promedio,
+    volatilidad
+):
+
+    precio = moneda.get(
+        "current_price"
+    )
+
+    cambio_1h = moneda.get(
+        "price_change_percentage_1h_in_currency"
+    )
+
+    cambio_24h = moneda.get(
+        "price_change_percentage_24h_in_currency"
+    )
+
+    cambio_7d = moneda.get(
+        "price_change_percentage_7d_in_currency"
+    )
+
+    volumen = (
+        moneda.get("total_volume")
+        or 0
+    )
+
+    market_cap = (
+        moneda.get("market_cap")
+        or 0
+    )
+
+    # ========================================================
+    # 1. TENDENCIA - 20 PUNTOS
+    # ========================================================
+
+    tendencia = 0
+
+    if cambio_7d is not None:
+
+        if cambio_7d >= 15:
+
+            tendencia += 12
+
+        elif cambio_7d >= 8:
+
+            tendencia += 10
+
+        elif cambio_7d >= 4:
+
+            tendencia += 8
+
+        elif cambio_7d >= 1:
+
+            tendencia += 6
+
+        elif cambio_7d >= -2:
+
+            tendencia += 4
+
+        elif cambio_7d >= -6:
+
+            tendencia += 2
+
+    if precio is not None and promedio > 0:
+
+        diferencia_promedio = (
+            (precio - promedio)
+            / promedio
+        ) * 100
+
+        if diferencia_promedio >= 5:
+
+            tendencia += 8
+
+        elif diferencia_promedio >= 2:
+
+            tendencia += 7
+
+        elif diferencia_promedio >= 0:
+
+            tendencia += 5
+
+        elif diferencia_promedio >= -3:
+
+            tendencia += 3
+
+        else:
+
+            tendencia += 1
+
+    tendencia = limitar(
+        tendencia,
+        0,
+        20
+    )
+
+    # ========================================================
+    # 2. MOMENTUM - 15 PUNTOS
+    # ========================================================
+
+    momentum = 0
+
+    if cambio_1h is not None:
+
+        if cambio_1h >= 2:
+
+            momentum += 8
+
+        elif cambio_1h >= 1:
+
+            momentum += 7
+
+        elif cambio_1h >= 0.3:
+
+            momentum += 5
+
+        elif cambio_1h >= 0:
+
+            momentum += 3
+
+        elif cambio_1h >= -1:
+
+            momentum += 1
+
+    if cambio_24h is not None:
+
+        if cambio_24h >= 10:
+
+            momentum += 7
+
+        elif cambio_24h >= 5:
+
+            momentum += 6
+
+        elif cambio_24h >= 3:
+
+            momentum += 5
+
+        elif cambio_24h >= 0:
+
+            momentum += 3
+
+        elif cambio_24h >= -3:
+
+            momentum += 1
+
+    momentum = limitar(
+        momentum,
+        0,
+        15
+    )
+
+    # ========================================================
+    # 3. RSI - 15 PUNTOS
+    # ========================================================
+
+    rsi_score = 0
+
+    if rsi is not None:
+
+        if 52 <= rsi <= 68:
+
+            rsi_score = 15
+
+        elif 48 <= rsi < 52:
+
+            rsi_score = 12
+
+        elif 68 < rsi <= 72:
+
+            rsi_score = 12
+
+        elif 40 <= rsi < 48:
+
+            rsi_score = 8
+
+        elif 72 < rsi <= 78:
+
+            rsi_score = 7
+
+        elif 30 <= rsi < 40:
+
+            rsi_score = 7
+
+        elif rsi < 30:
+
+            rsi_score = 5
+
+        else:
+
+            rsi_score = 2
+
+    # ========================================================
+    # 4. VOLUMEN - 15 PUNTOS
+    # ========================================================
+
+    volumen_score = 0
+
+    if market_cap > 0:
+
+        rotacion = (
+            volumen
+            / market_cap
+        )
+
+    else:
+
+        rotacion = 0
+
+    if volumen >= 1_000_000_000:
+
+        volumen_score += 8
+
+    elif volumen >= 500_000_000:
+
+        volumen_score += 7
+
+    elif volumen >= 200_000_000:
+
+        volumen_score += 6
+
+    elif volumen >= 100_000_000:
+
+        volumen_score += 5
+
+    elif volumen >= 50_000_000:
+
+        volumen_score += 3
+
+    if rotacion >= 0.30:
+
+        volumen_score += 7
+
+    elif rotacion >= 0.20:
+
+        volumen_score += 6
+
+    elif rotacion >= 0.10:
+
+        volumen_score += 5
+
+    elif rotacion >= 0.05:
+
+        volumen_score += 3
+
+    else:
+
+        volumen_score += 1
+
+    volumen_score = limitar(
+        volumen_score,
+        0,
+        15
+    )
+
+    # ========================================================
+    # 5. SOPORTE - 15 PUNTOS
+    # ========================================================
+
+    soporte_score = 0
+
+    if precio and soporte:
+
+        distancia = (
+            (precio - soporte)
+            / precio
+        ) * 100
+
+        if distancia <= 1:
+
+            soporte_score = 15
+
+        elif distancia <= 2:
+
+            soporte_score = 13
+
+        elif distancia <= 3:
+
+            soporte_score = 11
+
+        elif distancia <= 5:
+
+            soporte_score = 8
+
+        elif distancia <= 8:
+
+            soporte_score = 5
+
+        else:
+
+            soporte_score = 2
+
+    # ========================================================
+    # 6. REBOTE - 10 PUNTOS
+    # ========================================================
+
+    rebote_score = 0
+
+    if cambio_1h is not None:
+
+        if cambio_1h >= 2:
+
+            rebote_score += 6
+
+        elif cambio_1h >= 1:
+
+            rebote_score += 5
+
+        elif cambio_1h >= 0.3:
+
+            rebote_score += 4
+
+        elif cambio_1h > 0:
+
+            rebote_score += 2
+
+    if precio and soporte:
+
+        distancia_soporte = (
+            (precio - soporte)
+            / precio
+        ) * 100
+
+        if distancia_soporte <= 2:
+
+            rebote_score += 4
+
+        elif distancia_soporte <= 4:
+
+            rebote_score += 2
+
+    rebote_score = limitar(
+        rebote_score,
+        0,
+        10
+    )
+
+    # ========================================================
+    # 7. LIQUIDEZ - 5 PUNTOS
+    # ========================================================
+
+    liquidez_score = 0
+
+    if rotacion >= 0.30:
+
+        liquidez_score = 5
+
+    elif rotacion >= 0.20:
+
+        liquidez_score = 4
+
+    elif rotacion >= 0.10:
+
+        liquidez_score = 3
+
+    elif rotacion >= 0.05:
+
+        liquidez_score = 2
+
+    elif rotacion > 0:
+
+        liquidez_score = 1
+
+    # ========================================================
+    # 8. RIESGO - 5 PUNTOS
+    # ========================================================
+
+    riesgo_score = 5
+
+    if volatilidad is not None:
+
+        if volatilidad >= 5:
+
+            riesgo_score = 0
+
+        elif volatilidad >= 3:
+
+            riesgo_score = 1
+
+        elif volatilidad >= 2:
+
+            riesgo_score = 2
+
+        elif volatilidad >= 1:
+
+            riesgo_score = 4
+
+        else:
+
+            riesgo_score = 5
+
+    # RSI extremo reduce calidad de la señal
+    if rsi is not None:
+
+        if rsi >= 80:
+
+            riesgo_score = max(
+                0,
+                riesgo_score - 2
+            )
+
+        elif rsi <= 20:
+
+            riesgo_score = max(
+                0,
+                riesgo_score - 1
+            )
+
+    riesgo_score = limitar(
+        riesgo_score,
+        0,
+        5
+    )
+
+    # ========================================================
+    # TOTAL
+    # ========================================================
+
+    score_total = (
+        tendencia
+        + momentum
+        + rsi_score
+        + volumen_score
+        + soporte_score
+        + rebote_score
+        + liquidez_score
+        + riesgo_score
+    )
+
+    score_total = limitar(
+        round(score_total),
+        0,
+        100
+    )
+
+    componentes = {
+        "tendencia": tendencia,
+        "momentum": momentum,
+        "rsi": rsi_score,
+        "volumen": volumen_score,
+        "soporte": soporte_score,
+        "rebote": rebote_score,
+        "liquidez": liquidez_score,
+        "riesgo": riesgo_score
+    }
+
+    return score_total, componentes
+
+
+# ============================================================
+# NIVEL DEL SCORE
+# ============================================================
+
+def obtener_nivel_score(score):
+
+    if score >= 90:
+
+        return "EXCEPCIONAL"
+
+    if score >= 75:
+
+        return "FUERTE"
+
+    if score >= 60:
+
+        return "INTERESANTE"
+
+    if score >= 40:
+
+        return "OBSERVACION"
+
+    return "DEBIL"
+
+
+# ============================================================
+# ICONO DEL SCORE
+# ============================================================
+
+def obtener_icono_score(score):
+
+    if score >= 90:
+
+        return "🔥"
+
+    if score >= 75:
+
+        return "🚀"
+
+    if score >= 60:
+
+        return "🟢"
+
+    if score >= 40:
+
+        return "🟡"
+
+    return "🔴"
+
+
+# ============================================================
 # ANALIZAR MONEDA
 # ============================================================
 
-def analizar_moneda(
-    moneda
-):
-
-    coin_id = moneda.get(
-        "id"
-    )
+def analizar_moneda(moneda):
 
     simbolo = str(
         moneda.get(
@@ -702,20 +1192,6 @@ def analizar_moneda(
 
     cambio_7d = moneda.get(
         "price_change_percentage_7d_in_currency"
-    )
-
-    volumen = (
-        moneda.get(
-            "total_volume"
-        )
-        or 0
-    )
-
-    market_cap = (
-        moneda.get(
-            "market_cap"
-        )
-        or 0
     )
 
     high_24h = moneda.get(
@@ -746,84 +1222,114 @@ def analizar_moneda(
 
         return None
 
-    # --------------------------------------------------------
+    if not precios:
+
+        precios = [precio]
+
+    # ========================================================
     # RSI
-    # --------------------------------------------------------
+    # ========================================================
 
     rsi = calcular_rsi(
         precios
     )
 
-    # --------------------------------------------------------
-    # RANGO DE LAS ÚLTIMAS 24 OBSERVACIONES
-    # --------------------------------------------------------
+    # ========================================================
+    # ÚLTIMAS 24 OBSERVACIONES
+    # ========================================================
 
     if len(precios) >= 24:
 
         ultimos = precios[-24:]
 
-    elif precios:
+    else:
 
         ultimos = precios
 
-    else:
+    soporte = min(ultimos)
 
-        ultimos = [
-            precio
-        ]
-
-    soporte = min(
-        ultimos
-    )
-
-    resistencia = max(
-        ultimos
-    )
+    resistencia = max(ultimos)
 
     promedio = (
         sum(ultimos)
         / len(ultimos)
     )
 
-    # --------------------------------------------------------
-    # DISTANCIA DEL SOPORTE
-    # --------------------------------------------------------
+    # ========================================================
+    # VOLATILIDAD
+    # ========================================================
+
+    volatilidad = calcular_volatilidad(
+        ultimos
+    )
+
+    # ========================================================
+    # SCORE LABORATORIO
+    # ========================================================
+
+    score, componentes = (
+        calcular_score_laboratorio(
+            moneda,
+            precios,
+            rsi,
+            soporte,
+            resistencia,
+            promedio,
+            volatilidad
+        )
+    )
+
+    nivel = obtener_nivel_score(
+        score
+    )
+
+    icono = obtener_icono_score(
+        score
+    )
+
+    # ========================================================
+    # DISTANCIA AL SOPORTE
+    # ========================================================
 
     if precio > 0:
 
         distancia_soporte = (
-            precio - soporte
-        ) / precio
+            (precio - soporte)
+            / precio
+        ) * 100
 
     else:
 
-        distancia_soporte = 1
+        distancia_soporte = 100
 
-    cerca_soporte = (
-        distancia_soporte <= 0.02
-    )
-
-    # --------------------------------------------------------
-    # DISTANCIA DE RESISTENCIA
-    # --------------------------------------------------------
+    # ========================================================
+    # DISTANCIA A RESISTENCIA
+    # ========================================================
 
     if precio > 0:
 
         distancia_resistencia = (
-            resistencia - precio
-        ) / precio
+            (resistencia - precio)
+            / precio
+        ) * 100
 
     else:
 
-        distancia_resistencia = 1
+        distancia_resistencia = 100
 
-    cerca_resistencia = (
-        distancia_resistencia <= 0.01
+    # ========================================================
+    # LIQUIDEZ
+    # ========================================================
+
+    market_cap = (
+        moneda.get("market_cap")
+        or 0
     )
 
-    # --------------------------------------------------------
-    # LIQUIDEZ
-    # --------------------------------------------------------
+    volumen = (
+        moneda.get("total_volume")
+        or 0
+    )
 
     if market_cap > 0:
 
@@ -837,619 +1343,436 @@ def analizar_moneda(
         liquidez = 0
 
     # ========================================================
-    # ESCENARIO DE RECUPERACIÓN
+    # CLASIFICACIÓN
     # ========================================================
 
-    puntuacion_caida = 0
+    alerta = None
 
-    razones_caida = []
+    razones = []
 
-    # Caída 24h
+    # --------------------------------------------------------
+    # RECUPERACIÓN
+    # --------------------------------------------------------
 
-    if cambio_24h <= -5:
+    condiciones_recuperacion = 0
 
-        puntuacion_caida += 35
+    if cambio_24h <= -3:
 
-        razones_caida.append(
-            "caída 24h fuerte"
-        )
+        condiciones_recuperacion += 1
 
-    elif cambio_24h <= -3:
-
-        puntuacion_caida += 25
-
-        razones_caida.append(
+        razones.append(
             "caída 24h relevante"
         )
 
-    # RSI
+    if rsi is not None and rsi <= 40:
 
-    if rsi is not None:
+        condiciones_recuperacion += 1
 
-        if rsi <= 30:
-
-            puntuacion_caida += 30
-
-            razones_caida.append(
-                "RSI en sobreventa"
-            )
-
-        elif rsi <= 35:
-
-            puntuacion_caida += 20
-
-            razones_caida.append(
-                "RSI bajo"
-            )
-
-    # Soporte
-
-    if cerca_soporte:
-
-        puntuacion_caida += 15
-
-        razones_caida.append(
-            "precio cerca del soporte"
+        razones.append(
+            "RSI bajo"
         )
 
-    # Rebote 1h
+    if distancia_soporte <= 3:
 
-    if (
-        cambio_1h is not None
-        and cambio_1h > 0
-    ):
+        condiciones_recuperacion += 1
 
-        puntuacion_caida += 10
+        razones.append(
+            "precio próximo al soporte"
+        )
 
-        razones_caida.append(
+    if cambio_1h is not None and cambio_1h > 0:
+
+        condiciones_recuperacion += 1
+
+        razones.append(
             "rebote positivo en 1h"
         )
 
-    # Debilidad 7d
+    # --------------------------------------------------------
+    # MOMENTUM
+    # --------------------------------------------------------
 
-    if (
-        cambio_7d is not None
-        and cambio_7d < -8
-    ):
-
-        puntuacion_caida += 10
-
-        razones_caida.append(
-            "tendencia 7d debilitada"
-        )
-
-    # Liquidez
-
-    if liquidez >= 0.10:
-
-        puntuacion_caida += 5
-
-        razones_caida.append(
-            "alta rotación de volumen"
-        )
-
-    # ========================================================
-    # MOMENTUM ALCISTA
-    # ========================================================
-
-    puntuacion_momentum = 0
+    condiciones_momentum = 0
 
     razones_momentum = []
 
-    # Movimiento 24h
+    if cambio_24h >= 3:
 
-    if cambio_24h >= 7:
-
-        puntuacion_momentum += 35
+        condiciones_momentum += 1
 
         razones_momentum.append(
-            "subida 24h muy fuerte"
+            "movimiento alcista 24h"
         )
 
-    elif cambio_24h >= 5:
+    if cambio_1h is not None and cambio_1h > 0.3:
 
-        puntuacion_momentum += 30
+        condiciones_momentum += 1
 
         razones_momentum.append(
-            "subida 24h fuerte"
+            "impulso positivo en 1h"
         )
 
-    elif cambio_24h >= 3:
+    if cambio_7d is not None and cambio_7d > 0:
 
-        puntuacion_momentum += 15
+        condiciones_momentum += 1
 
         razones_momentum.append(
-            "movimiento alcista"
+            "tendencia 7d positiva"
         )
-
-    # Movimiento 1h
-
-    if cambio_1h is not None:
-
-        if cambio_1h >= 1:
-
-            puntuacion_momentum += 15
-
-            razones_momentum.append(
-                "impulso positivo en 1h"
-            )
-
-        elif cambio_1h <= -2:
-
-            puntuacion_momentum -= 10
-
-            razones_momentum.append(
-                "pérdida de fuerza en 1h"
-            )
-
-    # RSI
-
-    if rsi is not None:
-
-        if 50 <= rsi <= 70:
-
-            puntuacion_momentum += 20
-
-            razones_momentum.append(
-                "RSI saludable"
-            )
-
-        elif 45 <= rsi < 50:
-
-            puntuacion_momentum += 10
-
-            razones_momentum.append(
-                "RSI recuperándose"
-            )
-
-        elif rsi > 75:
-
-            puntuacion_momentum -= 10
-
-            razones_momentum.append(
-                "RSI elevado"
-            )
-
-    # Precio sobre promedio
 
     if precio > promedio:
 
-        puntuacion_momentum += 10
+        condiciones_momentum += 1
 
         razones_momentum.append(
             "precio sobre promedio reciente"
         )
 
-    # Resistencia
+    if rsi is not None and 50 <= rsi <= 70:
 
-    if cerca_resistencia:
-
-        puntuacion_momentum += 5
+        condiciones_momentum += 1
 
         razones_momentum.append(
-            "cerca de resistencia"
-        )
-
-    # Liquidez
-
-    if liquidez >= 0.10:
-
-        puntuacion_momentum += 10
-
-        razones_momentum.append(
-            "buena rotación de mercado"
+            "RSI saludable"
         )
 
     # ========================================================
     # DECISIÓN FINAL
     # ========================================================
 
-    alerta = None
-
-    puntuacion = 0
-
-    razones = []
-
-    # Recuperación
-
+    # Primero buscamos recuperación.
     if (
-        puntuacion_caida >= 60
-        and puntuacion_caida
-        >= puntuacion_momentum
+        score >= 70
+        and condiciones_recuperacion >= 2
+        and cambio_24h < 0
     ):
 
         alerta = "RECUPERACION"
 
-        puntuacion = (
-            puntuacion_caida
-        )
+        razones = razones[:5]
 
-        razones = (
-            razones_caida
-        )
-
-    # Momentum
-
-    elif puntuacion_momentum >= 60:
+    # Después momentum.
+    elif (
+        score >= 75
+        and condiciones_momentum >= 3
+    ):
 
         alerta = "MOMENTUM"
 
-        puntuacion = (
-            puntuacion_momentum
+        razones = razones_momentum[:5]
+
+    # Atención por debilidad.
+    elif (
+        score >= 60
+        and (
+            cambio_24h <= -5
+            or (
+                rsi is not None
+                and rsi <= 30
+            )
         )
-
-        razones = (
-            razones_momentum
-        )
-
-    # Atención
-
-    elif puntuacion_caida >= 50:
+    ):
 
         alerta = "ATENCION"
 
-        puntuacion = (
-            puntuacion_caida
+        razones = []
+
+        if cambio_24h <= -5:
+
+            razones.append(
+                "caída 24h fuerte"
+            )
+
+        if rsi is not None and rsi <= 30:
+
+            razones.append(
+                "RSI en sobreventa"
+            )
+
+        if distancia_soporte <= 3:
+
+            razones.append(
+                "precio cerca del soporte"
+            )
+
+    # ========================================================
+    # LECTURA HUMANA
+    # ========================================================
+
+    lectura = []
+
+    if cambio_7d is not None:
+
+        if cambio_7d > 5:
+
+            lectura.append(
+                "tendencia semanal positiva"
+            )
+
+        elif cambio_7d < -5:
+
+            lectura.append(
+                "tendencia semanal debilitada"
+            )
+
+    if cambio_1h is not None:
+
+        if cambio_1h > 1:
+
+            lectura.append(
+                "momentum positivo de corto plazo"
+            )
+
+        elif cambio_1h < -1:
+
+            lectura.append(
+                "pérdida de fuerza en 1h"
+            )
+
+    if rsi is not None:
+
+        if 50 <= rsi <= 70:
+
+            lectura.append(
+                "RSI en zona saludable"
+            )
+
+        elif rsi < 35:
+
+            lectura.append(
+                "RSI bajo"
+            )
+
+        elif rsi > 75:
+
+            lectura.append(
+                "RSI elevado"
+            )
+
+    if distancia_soporte <= 3:
+
+        lectura.append(
+            "precio próximo al soporte"
         )
 
-        razones = (
-            razones_caida
+    if distancia_resistencia <= 2:
+
+        lectura.append(
+            "precio próximo a resistencia"
         )
 
-    # --------------------------------------------------------
-    # NIVEL
-    # --------------------------------------------------------
+    if not lectura:
 
-    nivel = None
-
-    if alerta:
-
-        if puntuacion >= 75:
-
-            nivel = "FUERTE"
-
-        elif puntuacion >= 60:
-
-            nivel = "MODERADA"
-
-        else:
-
-            nivel = "ATENCION"
-
-    # --------------------------------------------------------
-    # RESULTADO
-    # --------------------------------------------------------
+        lectura.append(
+            "sin condición técnica dominante"
+        )
 
     return {
-
-        "coin_id": coin_id,
-
         "simbolo": simbolo,
-
         "nombre": nombre,
-
-        "alerta": alerta,
-
-        "nivel": nivel,
-
-        "puntuacion": puntuacion,
-
         "precio": precio,
-
         "cambio_1h": cambio_1h,
-
         "cambio_24h": cambio_24h,
-
         "cambio_7d": cambio_7d,
-
         "rsi": rsi,
-
-        "volumen": volumen,
-
-        "market_cap": market_cap,
-
-        "liquidez": liquidez,
-
         "soporte": soporte,
-
         "resistencia": resistencia,
-
-        "low24": low_24h,
-
-        "high24": high_24h,
-
+        "high_24h": high_24h,
+        "low_24h": low_24h,
+        "volatilidad": volatilidad,
+        "liquidez": liquidez,
+        "volumen": volumen,
+        "market_cap": market_cap,
+        "score": score,
+        "componentes": componentes,
+        "nivel": nivel,
+        "icono": icono,
+        "alerta": alerta,
         "razones": razones,
+        "lectura": lectura
     }
 
 
 # ============================================================
-# FORMATO DE PRECIO
+# MENSAJE TELEGRAM
 # ============================================================
 
-def formato_precio(
-    precio
-):
+def construir_mensaje(resultado):
 
-    if precio is None:
+    simbolo = resultado["simbolo"]
 
-        return "N/D"
+    alerta = resultado["alerta"]
 
-    if precio >= 1000:
+    score = resultado["score"]
 
-        return (
-            f"${precio:,.0f}"
-        )
+    nivel = resultado["nivel"]
 
-    if precio >= 1:
+    icono = resultado["icono"]
 
-        return (
-            f"${precio:,.2f}"
-        )
-
-    return (
-        f"${precio:,.6f}"
+    titulo = (
+        "RECUPERACION"
+        if alerta == "RECUPERACION"
+        else
+        "MOMENTUM"
+        if alerta == "MOMENTUM"
+        else
+        "ATENCION"
     )
 
-
-# ============================================================
-# CREAR MENSAJE DE TELEGRAM
-# ============================================================
-
-def crear_mensaje(
-    alertas
-):
-
-    if not alertas:
-
-        return None
-
-    lineas = [
-
-        "🚨 BTC ALERT BOT",
-
-        "🧪 LABORATORIO",
-
-        "",
-
-        f"🔎 {len(alertas)} "
-        "alerta(s) nueva(s)",
-
-        "📊 Scanner técnico automático",
-
-        "",
+    componentes = resultado[
+        "componentes"
     ]
 
-    for alerta in alertas:
+    razones = resultado[
+        "razones"
+    ]
 
-        tipo = alerta.get(
-            "alerta"
+    lectura = resultado[
+        "lectura"
+    ]
+
+    razones_texto = ""
+
+    for razon in razones:
+
+        razones_texto += (
+            f"• {razon}\n"
         )
 
-        # ----------------------------------------------------
-        # TÍTULO
-        # ----------------------------------------------------
+    lectura_texto = ""
 
-        if tipo == "RECUPERACION":
+    for item in lectura[:4]:
 
-            titulo = (
-                "🟢 "
-                f"{alerta['simbolo']} "
-                "— POSIBLE RECUPERACIÓN"
-            )
-
-        elif tipo == "MOMENTUM":
-
-            titulo = (
-                "🚀 "
-                f"{alerta['simbolo']} "
-                "— MOMENTUM ALCISTA"
-            )
-
-        else:
-
-            titulo = (
-                "🟠 "
-                f"{alerta['simbolo']} "
-                "— ATENCIÓN"
-            )
-
-        lineas.append(
-            "━━━━━━━━━━━━━━"
+        lectura_texto += (
+            f"• {item}\n"
         )
 
-        lineas.append(
-            titulo
+    rsi = resultado["rsi"]
+
+    if rsi is None:
+
+        rsi_texto = "N/D"
+
+    else:
+
+        rsi_texto = f"{rsi:.1f}"
+
+    volatilidad = resultado[
+        "volatilidad"
+    ]
+
+    if volatilidad is None:
+
+        volatilidad_texto = "N/D"
+
+    else:
+
+        volatilidad_texto = (
+            f"{volatilidad:.2f}%"
         )
 
-        lineas.append(
-            f"Nivel: "
-            f"{alerta['nivel']}"
-        )
+    liquidez = resultado[
+        "liquidez"
+    ]
 
-        lineas.append(
-            f"Puntuación: "
-            f"{alerta['puntuacion']}/100"
-        )
-
-        lineas.append(
-            "💰 Precio: "
-            f"{formato_precio(alerta['precio'])}"
-        )
-
-        # ----------------------------------------------------
-        # 1H
-        # ----------------------------------------------------
-
-        cambio_1h = alerta.get(
-            "cambio_1h"
-        )
-
-        if cambio_1h is not None:
-
-            lineas.append(
-                f"⚡ 1h: "
-                f"{cambio_1h:+.2f}%"
-            )
-
-        # ----------------------------------------------------
-        # 24H
-        # ----------------------------------------------------
-
-        cambio_24h = alerta.get(
-            "cambio_24h"
-        )
-
-        if cambio_24h is not None:
-
-            lineas.append(
-                f"📈 24h: "
-                f"{cambio_24h:+.2f}%"
-            )
-
-        # ----------------------------------------------------
-        # 7D
-        # ----------------------------------------------------
-
-        cambio_7d = alerta.get(
-            "cambio_7d"
-        )
-
-        if cambio_7d is not None:
-
-            lineas.append(
-                f"📅 7d: "
-                f"{cambio_7d:+.2f}%"
-            )
-
-        # ----------------------------------------------------
-        # RSI
-        # ----------------------------------------------------
-
-        rsi = alerta.get(
-            "rsi"
-        )
-
-        if rsi is not None:
-
-            lineas.append(
-                f"📊 RSI(14): "
-                f"{rsi:.2f}"
-            )
-
-        # ----------------------------------------------------
-        # VOLUMEN
-        # ----------------------------------------------------
-
-        volumen = alerta.get(
-            "volumen"
-        )
-
-        if volumen:
-
-            lineas.append(
-                "📦 Volumen 24h: "
-                f"${volumen:,.0f}"
-            )
-
-        # ----------------------------------------------------
-        # SOPORTE
-        # ----------------------------------------------------
-
-        lineas.append(
-            "📍 Soporte: "
-            f"{formato_precio(alerta['soporte'])}"
-        )
-
-        # ----------------------------------------------------
-        # RESISTENCIA
-        # ----------------------------------------------------
-
-        lineas.append(
-            "📍 Resistencia: "
-            f"{formato_precio(alerta['resistencia'])}"
-        )
-
-        # ----------------------------------------------------
-        # RAZONES
-        # ----------------------------------------------------
-
-        razones = alerta.get(
-            "razones",
-            []
-        )
-
-        if razones:
-
-            lineas.append("")
-
-            lineas.append(
-                "Motivos:"
-            )
-
-            for razon in razones:
-
-                lineas.append(
-                    f"• {razon}"
-                )
-
-        lineas.append("")
-
-        lineas.append(
-            "⚠️ Señal técnica, "
-            "no recomendación de compra."
-        )
-
-        lineas.append("")
-
-    return "\n".join(
-        lineas
+    liquidez_texto = (
+        f"{liquidez * 100:.2f}%"
     )
+
+    mensaje = (
+        "🧪 EL LABORATORIO\n"
+        "\n"
+        f"{icono} {simbolo} — {titulo}\n"
+        "\n"
+        f"⭐ SCORE LABORATORIO: "
+        f"{score}/100\n"
+        f"🎯 NIVEL: {nivel}\n"
+        "\n"
+        f"💰 Precio: "
+        f"{dinero(resultado['precio'])}\n"
+        f"📈 1h: "
+        f"{porcentaje(resultado['cambio_1h'])}\n"
+        f"📊 24h: "
+        f"{porcentaje(resultado['cambio_24h'])}\n"
+        f"📅 7d: "
+        f"{porcentaje(resultado['cambio_7d'])}\n"
+        f"📉 RSI: {rsi_texto}\n"
+        f"📦 Volumen: "
+        f"${resultado['volumen']:,.0f}\n"
+        f"💧 Liquidez: "
+        f"{liquidez_texto}\n"
+        f"🌊 Volatilidad: "
+        f"{volatilidad_texto}\n"
+        "\n"
+        f"🧱 Soporte: "
+        f"{dinero(resultado['soporte'])}\n"
+        f"🔺 Resistencia: "
+        f"{dinero(resultado['resistencia'])}\n"
+        "\n"
+        "🧠 LECTURA:\n"
+        f"{lectura_texto}"
+        "\n"
+        "🔎 FACTORES DEL SCORE:\n"
+        f"📈 Tendencia: "
+        f"{componentes['tendencia']}/20\n"
+        f"⚡ Momentum: "
+        f"{componentes['momentum']}/15\n"
+        f"📊 RSI: "
+        f"{componentes['rsi']}/15\n"
+        f"📦 Volumen: "
+        f"{componentes['volumen']}/15\n"
+        f"🧱 Soporte: "
+        f"{componentes['soporte']}/15\n"
+        f"🔄 Rebote: "
+        f"{componentes['rebote']}/10\n"
+        f"💧 Liquidez: "
+        f"{componentes['liquidez']}/5\n"
+        f"⚠️ Riesgo: "
+        f"{componentes['riesgo']}/5\n"
+        "\n"
+        "📌 MOTIVOS:\n"
+        f"{razones_texto}"
+        "\n"
+        "⚠️ Señal técnica. "
+        "No constituye una recomendación "
+        "automática de compra o venta."
+    )
+
+    return mensaje
 
 
 # ============================================================
-# PROGRAMA PRINCIPAL
+# MAIN
 # ============================================================
 
 def main():
 
-    print("")
     print(
-        "========================================"
+        "============================================"
     )
+
     print(
-        " BTC ALERT BOT - LABORATORIO"
+        "🧪 BTC ALERT BOT - EL LABORATORIO 4.0"
     )
+
     print(
-        "========================================"
+        "============================================"
     )
-    print("")
 
     # --------------------------------------------------------
-    # CARGAR MEMORIA
+    # MEMORIA
     # --------------------------------------------------------
 
     estado = cargar_estado()
 
-    ultima_alerta = estado.get(
-        "ultima_alerta",
-        {}
-    )
-
-    if not isinstance(
-        ultima_alerta,
-        dict
-    ):
-
-        ultima_alerta = {}
-
     # --------------------------------------------------------
-    # OBTENER MERCADO
+    # MERCADO
     # --------------------------------------------------------
 
     mercado = obtener_mercado()
 
     # --------------------------------------------------------
-    # SEXTA MONEDA DINÁMICA
+    # SEXTA MONEDA
     # --------------------------------------------------------
 
     moneda_dinamica = (
@@ -1466,46 +1789,32 @@ def main():
 
     for coin_id in MONEDAS_PRINCIPALES:
 
-        encontrada = None
-
         for moneda in mercado:
 
-            if moneda.get(
-                "id"
-            ) == coin_id:
+            if moneda.get("id") == coin_id:
 
-                encontrada = moneda
+                monedas_a_analizar.append(
+                    moneda
+                )
 
                 break
 
-        if encontrada is not None:
-
-            monedas_a_analizar.append(
-                encontrada
-            )
-
-    # Añadir sexta moneda
-
-    if moneda_dinamica is not None:
+    if moneda_dinamica:
 
         monedas_a_analizar.append(
             moneda_dinamica
         )
 
-    print("")
-
     print(
-        "Monedas a analizar: "
+        f"Monedas a analizar: "
         f"{len(monedas_a_analizar)}"
     )
 
-    print("")
-
     # --------------------------------------------------------
-    # ANALIZAR TODAS
+    # ANALIZAR
     # --------------------------------------------------------
 
-    alertas_nuevas = []
+    resultados = []
 
     for moneda in monedas_a_analizar:
 
@@ -1517,7 +1826,7 @@ def main():
         ).upper()
 
         print(
-            f"Analizando {simbolo}..."
+            f"\nAnalizando {simbolo}..."
         )
 
         try:
@@ -1526,82 +1835,104 @@ def main():
                 moneda
             )
 
-            # ----------------------------------------------
-            # ERROR DE DATOS
-            # ----------------------------------------------
-
             if resultado is None:
 
                 print(
                     f"{simbolo}: "
-                    "NO SE PUDO ANALIZAR"
+                    "datos insuficientes"
                 )
 
                 continue
 
-            tipo_alerta = resultado.get(
-                "alerta"
+            print(
+                f"{simbolo}: "
+                f"SCORE "
+                f"{resultado['score']}/100"
             )
 
-            # ----------------------------------------------
-            # SIN ALERTA
-            # ----------------------------------------------
-
-            if tipo_alerta is None:
-
-                ultima_alerta[
-                    simbolo
-                ] = None
-
-                print(
-                    f"{simbolo}: "
-                    "SIN ALERTA"
-                )
-
-                continue
-
-            # ----------------------------------------------
-            # ALERTA NUEVA
-            # ----------------------------------------------
-
-            alerta_anterior = (
-                ultima_alerta.get(
-                    simbolo
-                )
+            print(
+                f"Nivel: "
+                f"{resultado['nivel']}"
             )
 
-            if tipo_alerta != alerta_anterior:
-
-                alertas_nuevas.append(
-                    resultado
-                )
-
-                ultima_alerta[
-                    simbolo
-                ] = tipo_alerta
+            if resultado["alerta"]:
 
                 print(
-                    f"{simbolo}: "
-                    f"NUEVA ALERTA "
-                    f"{tipo_alerta}"
+                    f"Alerta: "
+                    f"{resultado['alerta']}"
                 )
 
             else:
 
                 print(
-                    f"{simbolo}: "
-                    f"ALERTA "
-                    f"{tipo_alerta} "
-                    "YA ENVIADA"
+                    "SIN ALERTA"
                 )
+
+            resultados.append(
+                resultado
+            )
 
         except Exception as error:
 
             print(
-                f"{simbolo}: "
-                f"ERROR durante análisis: "
-                f"{error}"
+                f"Error analizando "
+                f"{simbolo}: {error}"
             )
+
+    # --------------------------------------------------------
+    # NUEVAS ALERTAS
+    # --------------------------------------------------------
+
+    nuevas_alertas = []
+
+    ultima_alerta = estado[
+        "ultima_alerta"
+    ]
+
+    for resultado in resultados:
+
+        simbolo = resultado[
+            "simbolo"
+        ]
+
+        alerta = resultado[
+            "alerta"
+        ]
+
+        if not alerta:
+
+            continue
+
+        alerta_anterior = ultima_alerta.get(
+            simbolo
+        )
+
+        # ----------------------------------------------------
+        # ANTI-REPETICIÓN
+        # ----------------------------------------------------
+
+        if alerta_anterior == alerta:
+
+            print(
+                f"{simbolo}: "
+                f"{alerta} YA ENVIADA"
+            )
+
+            continue
+
+        print(
+            f"{simbolo}: "
+            f"NUEVA ALERTA "
+            f"{alerta}"
+        )
+
+        nuevas_alertas.append(
+            resultado
+        )
+
+        ultima_alerta[
+            simbolo
+        ] = alerta
 
     # --------------------------------------------------------
     # GUARDAR MEMORIA
@@ -1619,74 +1950,47 @@ def main():
     # TELEGRAM
     # --------------------------------------------------------
 
-    if alertas_nuevas:
+    for resultado in nuevas_alertas:
 
-        mensaje = crear_mensaje(
-            alertas_nuevas
+        mensaje = construir_mensaje(
+            resultado
         )
 
-        if mensaje:
+        enviar_telegram(
+            mensaje
+        )
 
-            enviado = enviar_telegram(
-                mensaje
-            )
+        # Pequeña pausa para evitar
+        # demasiadas solicitudes seguidas.
+        time.sleep(1)
 
-            if enviado:
+    # --------------------------------------------------------
+    # RESUMEN
+    # --------------------------------------------------------
 
-                print(
-                    f"Se enviaron "
-                    f"{len(alertas_nuevas)} "
-                    "alerta(s) nueva(s)."
-                )
+    if nuevas_alertas:
 
-            else:
-
-                print(
-                    "No se pudo enviar "
-                    "el mensaje a Telegram."
-                )
+        print(
+            f"Se enviaron "
+            f"{len(nuevas_alertas)} "
+            f"alerta(s) nuevas."
+        )
 
     else:
-
-        print("")
 
         print(
             "No hay alertas nuevas."
         )
 
-    # --------------------------------------------------------
-    # FINAL
-    # --------------------------------------------------------
-
-    print("")
-
     print(
         "Análisis completado correctamente."
     )
 
-    print("")
-
 
 # ============================================================
-# EJECUTAR
+# EJECUCIÓN
 # ============================================================
 
 if __name__ == "__main__":
 
-    try:
-
-        main()
-
-    except Exception as error:
-
-        print("")
-
-        print(
-            "ERROR CRÍTICO:"
-        )
-
-        print(
-            str(error)
-        )
-
-        raise
+    main()
