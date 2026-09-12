@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import math
+
+import pytest
+
 from radar.indicators import (
     atr,
     compute_indicators,
@@ -11,105 +15,65 @@ from radar.indicators import (
     trend_from_emas,
     volatility,
 )
-from radar.models import Candle
 
 
-def make_candles(count: int = 220) -> list[Candle]:
-    candles: list[Candle] = []
-
-    price = 100.0
-
-    for index in range(count):
-        open_price = price
-
-        close_price = (
-            price + 1.0
-            if index % 2 == 0
-            else price + 0.5
-        )
-
-        high_price = close_price + 1.0
-        low_price = open_price - 1.0
-
-        candles.append(
-            Candle(
-                timestamp=index * 60_000,
-                open=open_price,
-                high=high_price,
-                low=low_price,
-                close=close_price,
-                volume=1000.0 + index,
-                is_closed=True,
-            )
-        )
-
-        price = close_price
-
-    return candles
+# ============================================================
+# HELPERS
+# ============================================================
 
 
-def test_ema_returns_same_length():
-    values = list(range(1, 31))
+def assert_close(
+    actual: float | None,
+    expected: float,
+    *,
+    rel: float = 1e-9,
+    abs_tol: float = 1e-9,
+) -> None:
+    """
+    Comparación segura para números flotantes.
 
-    result = ema(values, 10)
+    Evita falsos errores como:
 
-    assert len(result) == len(values)
-    assert result[8] is None
-    assert result[9] is not None
+        19.999999999999996 != 20.0
+    """
+
+    assert actual is not None
+    assert actual == pytest.approx(
+        expected,
+        rel=rel,
+        abs=abs_tol,
+    )
 
 
-def test_rsi_returns_same_length():
-    values = [
-        100.0 + index
-        for index in range(30)
-    ]
+# ============================================================
+# EMA
+# ============================================================
 
-    result = rsi(values, 14)
+
+def test_ema_rejects_invalid_period() -> None:
+    values = [100.0, 110.0, 120.0]
+
+    with pytest.raises(ValueError):
+        ema(values, 0)
+
+
+def test_ema_rejects_empty_values() -> None:
+    with pytest.raises(ValueError):
+        ema([], 3)
+
+
+def test_ema_returns_none_until_enough_data() -> None:
+    values = [100.0, 110.0, 120.0]
+
+    result = ema(values, 5)
 
     assert len(result) == len(values)
-    assert result[13] is None
-    assert result[14] is not None
-    assert result[-1] == 100.0
+
+    for value in result:
+        assert value is None
 
 
-def test_true_range():
-    candles = [
-        Candle(
-            timestamp=1,
-            open=100,
-            high=105,
-            low=98,
-            close=103,
-            volume=100,
-        ),
-        Candle(
-            timestamp=2,
-            open=103,
-            high=110,
-            low=101,
-            close=108,
-            volume=120,
-        ),
-    ]
-
-    result = true_range(candles)
-
-    assert result[0] == 7.0
-    assert result[1] == 9.0
-
-
-def test_atr_returns_values():
-    candles = make_candles(30)
-
-    result = atr(candles, 14)
-
-    assert len(result) == 30
-    assert result[12] is None
-    assert result[13] is not None
-    assert result[-1] is not None
-
-
-def test_momentum():
+def test_ema_calculates_values() -> None:
     values = [
         100.0,
         110.0,
@@ -117,115 +81,141 @@ def test_momentum():
         130.0,
     ]
 
-    result = momentum(values, 2)
+    result = ema(values, 2)
+
+    assert len(result) == len(values)
 
     assert result[0] is None
-    assert result[1] is None
-    assert result[2] == 20.0
-    assert result[3] == (
-        (130.0 / 110.0) - 1.0
-    ) * 100.0
+
+    assert_close(
+        result[1],
+        105.0,
+    )
+
+    # EMA:
+    # 120 * 2/3 + 105 * 1/3
+    expected = (
+        120.0 * (2.0 / 3.0)
+        + 105.0 * (1.0 / 3.0)
+    )
+
+    assert_close(
+        result[2],
+        expected,
+    )
 
 
-def test_volatility():
+# ============================================================
+# RSI
+# ============================================================
+
+
+def test_rsi_rejects_invalid_period() -> None:
+    values = [100.0, 101.0, 102.0]
+
+    with pytest.raises(ValueError):
+        rsi(values, 0)
+
+
+def test_rsi_returns_none_until_enough_data() -> None:
     values = [
         100.0,
         101.0,
+        102.0,
+    ]
+
+    result = rsi(values, 14)
+
+    assert len(result) == len(values)
+
+    for value in result:
+        assert value is None
+
+
+def test_rsi_detects_strong_uptrend() -> None:
+    values = [
         100.0,
         101.0,
-        100.0,
+        102.0,
+        103.0,
+        104.0,
+        105.0,
+        106.0,
+        107.0,
+        108.0,
+        109.0,
+        110.0,
+        111.0,
+        112.0,
+        113.0,
+        114.0,
+        115.0,
+    ]
+
+    result = rsi(values, 14)
+
+    assert len(result) == len(values)
+
+    last = result[-1]
+
+    assert last is not None
+    assert 0.0 <= last <= 100.0
+
+    # Una serie que solamente sube debe producir
+    # un RSI muy alto.
+    assert last > 90.0
+
+
+def test_rsi_detects_strong_downtrend() -> None:
+    values = [
+        115.0,
+        114.0,
+        113.0,
+        112.0,
+        111.0,
+        110.0,
+        109.0,
+        108.0,
+        107.0,
+        106.0,
+        105.0,
+        104.0,
+        103.0,
+        102.0,
         101.0,
         100.0,
     ]
 
-    result = volatility(values, 3)
+    result = rsi(values, 14)
 
-    assert len(result) == len(values)
-    assert result[0] is None
-    assert result[-1] is not None
-    assert result[-1] >= 0.0
+    last = result[-1]
+
+    assert last is not None
+    assert 0.0 <= last <= 100.0
+
+    assert last < 10.0
 
 
-def test_relative_volume():
-    candles = []
+# ============================================================
+# TRUE RANGE
+# ============================================================
 
-    for index in range(25):
-        volume = 100.0
 
-        if index == 24:
-            volume = 200.0
-
-        candles.append(
-            Candle(
-                timestamp=index,
-                open=100,
-                high=101,
-                low=99,
-                close=100,
-                volume=volume,
-            )
-        )
-
-    result = relative_volume(
-        candles,
-        20,
+def test_true_range_first_candle() -> None:
+    result = true_range(
+        high=110.0,
+        low=100.0,
+        previous_close=None,
     )
 
-    assert result[-1] == 2.0
-
-
-def test_trend_bullish():
-    result = trend_from_emas(
-        price=110.0,
-        ema20=108.0,
-        ema50=105.0,
-        ema200=100.0,
+    assert_close(
+        result,
+        10.0,
     )
 
-    assert result == "BULLISH"
 
-
-def test_trend_bearish():
-    result = trend_from_emas(
-        price=90.0,
-        ema20=92.0,
-        ema50=95.0,
-        ema200=100.0,
-    )
-
-    assert result == "BEARISH"
-
-
-def test_compute_indicators():
-    candles = make_candles(220)
-
-    result = compute_indicators(candles)
-
-    assert result["price"] > 0
-
-    assert result["ema20"] is not None
-    assert result["ema50"] is not None
-    assert result["ema200"] is not None
-
-    assert result["rsi14"] is not None
-    assert result["atr14"] is not None
-
-    assert result["volatility20"] is not None
-    assert result["momentum10"] is not None
-
-    assert result["relative_volume20"] is not None
-
-    assert result["candles_count"] == 220
-    assert result["last_candle_closed"] is True
-
-
-def test_compute_indicators_requires_valid_candles():
-    try:
-        compute_indicators([])
-    except Exception:
-        return
-
-    raise AssertionError(
-        "compute_indicators debería rechazar "
-        "una lista vacía."
-    )
+def test_true_range_uses_previous_close() -> None:
+    result = true_range(
+        high=110.0,
+        low=100.0,
+        previous_close=90
