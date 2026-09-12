@@ -44,10 +44,6 @@ class RiskPlan:
         return asdict(self)
 
 
-# ============================================================
-# UTILIDADES
-# ============================================================
-
 def _number(
     value: Any,
     default: float | None = None,
@@ -60,27 +56,16 @@ def _number(
     except (TypeError, ValueError):
         return default
 
-    if number != number:
+    if not number == number:
         return default
 
-    if number in {
+    if number in (
         float("inf"),
         float("-inf"),
-    }:
+    ):
         return default
 
     return number
-
-
-def _clamp(
-    value: float,
-    minimum: float,
-    maximum: float,
-) -> float:
-    return max(
-        minimum,
-        min(maximum, value),
-    )
 
 
 def _normalize(value: Any) -> str:
@@ -103,10 +88,6 @@ def _first_number(
     return None
 
 
-# ============================================================
-# VALIDACIÓN
-# ============================================================
-
 def _validate_positive(
     value: float | None,
     name: str,
@@ -122,10 +103,6 @@ def _validate_positive(
         )
 
 
-# ============================================================
-# DECISIONES OPERABLES
-# ============================================================
-
 def _is_operable_decision(
     decision: str,
 ) -> bool:
@@ -136,10 +113,6 @@ def _is_operable_decision(
     }
 
 
-# ============================================================
-# CÁLCULO DEL STOP
-# ============================================================
-
 def calculate_stop(
     price: float,
     atr: float,
@@ -149,12 +122,11 @@ def calculate_stop(
     """
     Calcula un stop técnico para una posición LONG.
 
-    Prioridad:
+    Se utiliza ATR como referencia de volatilidad.
+    Si existe soporte válido, se coloca un margen
+    adicional debajo del soporte.
 
-    1. Soporte válido con margen ATR.
-    2. Precio - ATR * multiplicador.
-
-    Nunca devuelve un stop por encima o igual al precio.
+    El stop siempre debe quedar por debajo del precio.
     """
 
     _validate_positive(
@@ -178,18 +150,18 @@ def calculate_stop(
 
     support_stop = None
 
-    if support is not None:
-        support_value = _number(
-            support
-        )
+    support_value = _number(
+        support
+    )
 
-        if (
-            support_value is not None
-            and 0 < support_value < price
-        ):
-            support_stop = support_value - (
-                atr * 0.20
-            )
+    if (
+        support_value is not None
+        and support_value > 0
+        and support_value < price
+    ):
+        support_stop = support_value - (
+            atr * 0.20
+        )
 
     candidates = [
         value
@@ -207,14 +179,8 @@ def calculate_stop(
             "No fue posible calcular un stop válido."
         )
 
-    # Elegimos el stop más conservador:
-    # el nivel más alejado del precio.
     return min(candidates)
 
-
-# ============================================================
-# OBJETIVOS
-# ============================================================
 
 def calculate_targets(
     entry: float,
@@ -222,15 +188,11 @@ def calculate_targets(
     resistance: float | None = None,
 ) -> tuple[float, float, float]:
     """
-    Calcula tres objetivos LONG utilizando múltiplos
-    de riesgo.
+    Calcula objetivos LONG utilizando múltiplos de riesgo.
 
     TP1 = 1.5R
     TP2 = 2.0R
     TP3 = 3.0R
-
-    Si existe una resistencia cercana, TP1 se adapta
-    para no ignorar una zona técnica importante.
     """
 
     _validate_positive(
@@ -262,33 +224,22 @@ def calculate_targets(
     if (
         resistance_value is not None
         and resistance_value > entry
+        and resistance_value < tp1
     ):
-        # Si la resistencia está antes de TP1,
-        # no colocamos TP1 artificialmente por encima
-        # de la primera barrera técnica.
-        if resistance_value < tp1:
-            tp1 = resistance_value
+        tp1 = resistance_value
 
-        # Garantizamos que TP1 siga siendo una ganancia.
-        if tp1 <= entry:
-            tp1 = entry + (
-                risk_per_unit * 1.0
-            )
+    if tp1 <= entry:
+        tp1 = entry + risk_per_unit
 
-    # Garantizamos orden lógico.
-    tp2 = max(
-        tp2,
-        tp1 + (
+    if tp2 <= tp1:
+        tp2 = tp1 + (
             risk_per_unit * 0.25
-        ),
-    )
+        )
 
-    tp3 = max(
-        tp3,
-        tp2 + (
+    if tp3 <= tp2:
+        tp3 = tp2 + (
             risk_per_unit * 0.25
-        ),
-    )
+        )
 
     return (
         tp1,
@@ -297,15 +248,13 @@ def calculate_targets(
     )
 
 
-# ============================================================
-# RELACIÓN RIESGO / BENEFICIO
-# ============================================================
-
 def calculate_risk_reward(
     entry: float,
     stop: float,
     target: float,
 ) -> float:
+    """Calcula reward/risk para una posición LONG."""
+
     _validate_positive(
         entry,
         "entry",
@@ -337,10 +286,6 @@ def calculate_risk_reward(
     return reward / risk
 
 
-# ============================================================
-# TAMAÑO DE POSICIÓN
-# ============================================================
-
 def calculate_position_size(
     capital: float,
     risk_percent: float,
@@ -348,12 +293,8 @@ def calculate_position_size(
     stop: float,
 ) -> tuple[float, float]:
     """
-    Calcula tamaño de posición para una operación LONG.
-
-    capital_at_risk = capital * risk_percent / 100
-
-    position_size = capital_at_risk /
-                    abs(entry - stop)
+    Calcula el tamaño de posición según el capital
+    que estamos dispuestos a arriesgar.
     """
 
     _validate_positive(
@@ -373,16 +314,14 @@ def calculate_position_size(
 
     if not 0 < risk_percent <= 100:
         raise RiskError(
-            "risk_percent debe estar entre "
-            "0 y 100."
+            "risk_percent debe estar entre 0 y 100."
         )
 
     risk_per_unit = entry - stop
 
     if risk_per_unit <= 0:
         raise RiskError(
-            "El stop debe estar por debajo "
-            "de la entrada."
+            "El stop debe estar por debajo de la entrada."
         )
 
     capital_at_risk = (
@@ -402,10 +341,6 @@ def calculate_position_size(
     )
 
 
-# ============================================================
-# PLAN COMPLETO
-# ============================================================
-
 def calculate_risk_plan(
     strategy: Mapping[str, Any],
     indicators: Mapping[str, Any],
@@ -416,23 +351,7 @@ def calculate_risk_plan(
     """
     Genera un plan de riesgo para una operación LONG.
 
-    El motor NO crea una operación si Strategy indica:
-
-    WAIT_CONFIRMATION
-    AVOID
-
-    Requiere:
-
-    - price
-    - ATR
-    - decisión de Strategy
-
-    Puede utilizar:
-
-    - support
-    - resistance
-    - capital
-    - risk_percent
+    WAIT_CONFIRMATION y AVOID nunca generan una posición.
     """
 
     if not isinstance(
@@ -468,9 +387,9 @@ def calculate_risk_plan(
         )
     )
 
-    # --------------------------------------------------------
-    # NO OPERABLE
-    # --------------------------------------------------------
+    # ========================================================
+    # DECISIÓN NO OPERABLE
+    # ========================================================
 
     if not _is_operable_decision(
         decision
@@ -498,219 +417,4 @@ def calculate_risk_plan(
             risk_percent=None,
             reason=(
                 "La decisión de Strategy "
-                "no permite abrir una operación."
-            ),
-            warnings=(
-                "No crear posición.",
-            ),
-        ).to_dict()
-
-    # --------------------------------------------------------
-    # PRECIO
-    # --------------------------------------------------------
-
-    price = _first_number(
-        indicators,
-        (
-            "price",
-            "close",
-        ),
-    )
-
-    _validate_positive(
-        price,
-        "price",
-    )
-
-    # --------------------------------------------------------
-    # ATR
-    # --------------------------------------------------------
-
-    atr = _first_number(
-        indicators,
-        (
-            "atr14",
-            "atr",
-        ),
-    )
-
-    _validate_positive(
-        atr,
-        "atr14",
-    )
-
-    # --------------------------------------------------------
-    # ESTRUCTURA
-    # --------------------------------------------------------
-
-    support = _first_number(
-        structure,
-        (
-            "support",
-            "nearest_support",
-            "support_level",
-        ),
-    )
-
-    resistance = _first_number(
-        structure,
-        (
-            "resistance",
-            "nearest_resistance",
-            "resistance_level",
-        ),
-    )
-
-    # --------------------------------------------------------
-    # ZONA DE ENTRADA
-    # --------------------------------------------------------
-
-    entry_reference = price
-
-    entry_low = price - (
-        atr * 0.25
-    )
-
-    entry_high = price + (
-        atr * 0.10
-    )
-
-    # Nunca permitimos entrada negativa.
-    entry_low = max(
-        entry_low,
-        price * 0.50,
-    )
-
-    # --------------------------------------------------------
-    # STOP
-    # --------------------------------------------------------
-
-    stop = calculate_stop(
-        price=entry_reference,
-        atr=atr,
-        support=support,
-    )
-
-    invalidation = stop
-
-    risk_per_unit = (
-        entry_reference - stop
-    )
-
-    if risk_per_unit <= 0:
-        raise RiskError(
-            "Riesgo por unidad inválido."
-        )
-
-    # --------------------------------------------------------
-    # OBJETIVOS
-    # --------------------------------------------------------
-
-    tp1, tp2, tp3 = calculate_targets(
-        entry=entry_reference,
-        risk_per_unit=risk_per_unit,
-        resistance=resistance,
-    )
-
-    # --------------------------------------------------------
-    # R:R
-    # --------------------------------------------------------
-
-    rr1 = calculate_risk_reward(
-        entry=entry_reference,
-        stop=stop,
-        target=tp1,
-    )
-
-    rr2 = calculate_risk_reward(
-        entry=entry_reference,
-        stop=stop,
-        target=tp2,
-    )
-
-    rr3 = calculate_risk_reward(
-        entry=entry_reference,
-        stop=stop,
-        target=tp3,
-    )
-
-    # --------------------------------------------------------
-    # ADVERTENCIAS
-    # --------------------------------------------------------
-
-    warnings: list[str] = []
-
-    if rr1 < 1.0:
-        warnings.append(
-            "TP1 tiene R:R inferior a 1:1."
-        )
-
-    if rr2 < 1.5:
-        warnings.append(
-            "TP2 tiene R:R inferior a 1:1.5."
-        )
-
-    if decision == DECISION_SPECULATIVE:
-        warnings.append(
-            "Operación especulativa: riesgo elevado."
-        )
-
-    if resistance is None:
-        warnings.append(
-            "No se proporcionó resistencia estructural."
-        )
-
-    if support is None:
-        warnings.append(
-            "No se proporcionó soporte estructural."
-        )
-
-    # --------------------------------------------------------
-    # TAMAÑO DE POSICIÓN
-    # --------------------------------------------------------
-
-    position_size = None
-    capital_at_risk = None
-    normalized_risk_percent = None
-
-    if capital is not None:
-        (
-            position_size,
-            capital_at_risk,
-        ) = calculate_position_size(
-            capital=capital,
-            risk_percent=risk_percent,
-            entry=entry_reference,
-            stop=stop,
-        )
-
-        normalized_risk_percent = (
-            float(risk_percent)
-        )
-
-    # --------------------------------------------------------
-    # RESULTADO
-    # --------------------------------------------------------
-
-    return RiskPlan(
-        valid=True,
-        decision=decision,
-        entry_low=round(
-            entry_low,
-            8,
-        ),
-        entry_high=round(
-            entry_high,
-            8,
-        ),
-        entry_reference=round(
-            entry_reference,
-            8,
-        ),
-        stop=round(
-            stop,
-            8,
-        ),
-        invalidation=round(
-            invalidation,
-            
+                "
