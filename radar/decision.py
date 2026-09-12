@@ -821,4 +821,4 @@ def build_decision(
 
             reason = (
                 "La señal alcista carece de suficiente "
-                "
+                
