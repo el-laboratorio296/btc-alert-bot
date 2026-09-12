@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 from typing import Any
 
@@ -9,31 +10,29 @@ from radar.models import Candle
 
 
 class BinanceProviderError(Exception):
-    """Error base del proveedor Binance."""
+    """Error del proveedor Binance."""
 
 
 class BinanceProvider:
     """
-    Proveedor de datos técnicos de Binance.
+    Proveedor de datos técnicos Binance para Radar El Laboratorio.
 
-    Utiliza exclusivamente el endpoint público de datos de Binance
-    para evitar depender de los endpoints tradicionales que pueden
-    devolver HTTP 451 en determinados entornos/regiones.
-
-    Fuente:
+    Binance Data API:
         https://data-api.binance.vision
 
-    Endpoint:
-        /api/v3/klines
+    Timeframes principales:
+        15m -> entrada
+        1h  -> momentum
+        4h  -> estructura
+        1d  -> tendencia
     """
 
     BASE_URL = "https://data-api.binance.vision"
-
     KLINES_ENDPOINT = "/api/v3/klines"
 
     DEFAULT_TIMEOUT = 20
-
     MAX_LIMIT = 1000
+    DEFAULT_RETRIES = 3
 
     SUPPORTED_INTERVALS = {
         "1m",
@@ -57,8 +56,9 @@ class BinanceProvider:
         self,
         session: requests.Session | None = None,
         timeout: int = DEFAULT_TIMEOUT,
-        max_retries: int = 3,
+        max_retries: int = DEFAULT_RETRIES,
     ) -> None:
+
         if timeout <= 0:
             raise ValueError(
                 "timeout debe ser mayor que cero."
@@ -76,8 +76,7 @@ class BinanceProvider:
         self.session.headers.update(
             {
                 "User-Agent": (
-                    "Radar-El-Laboratorio/5.0 "
-                    "(market-data-client)"
+                    "Radar-El-Laboratorio/5.0"
                 ),
                 "Accept": "application/json",
             }
@@ -89,32 +88,22 @@ class BinanceProvider:
 
     @staticmethod
     def normalize_symbol(symbol: str) -> str:
-        """
-        Convierte símbolos comunes al formato Spot USDT.
-
-        Ejemplos:
-            BTC      -> BTCUSDT
-            BTCUSDT  -> BTCUSDT
-            ETH      -> ETHUSDT
-            ethusdt  -> ETHUSDT
-        """
-
         if not isinstance(symbol, str):
             raise ValueError(
                 "symbol debe ser un texto."
             )
 
-        normalized = symbol.strip().upper()
+        symbol = symbol.strip().upper()
 
-        if not normalized:
+        if not symbol:
             raise ValueError(
                 "symbol no puede estar vacío."
             )
 
-        if normalized.endswith("USDT"):
-            return normalized
+        if symbol.endswith("USDT"):
+            return symbol
 
-        return f"{normalized}USDT"
+        return f"{symbol}USDT"
 
     # ============================================================
     # VALIDACIONES
@@ -125,6 +114,7 @@ class BinanceProvider:
         cls,
         interval: str,
     ) -> str:
+
         if not isinstance(interval, str):
             raise ValueError(
                 "interval debe ser un texto."
@@ -134,9 +124,7 @@ class BinanceProvider:
 
         if interval not in cls.SUPPORTED_INTERVALS:
             raise ValueError(
-                f"Intervalo Binance no soportado: {interval}. "
-                f"Permitidos: "
-                f"{', '.join(sorted(cls.SUPPORTED_INTERVALS))}"
+                f"Intervalo no soportado: {interval}"
             )
 
         return interval
@@ -146,6 +134,7 @@ class BinanceProvider:
         cls,
         limit: int,
     ) -> int:
+
         if not isinstance(limit, int):
             raise ValueError(
                 "limit debe ser un entero."
@@ -172,26 +161,15 @@ class BinanceProvider:
         endpoint: str,
         params: dict[str, Any],
     ) -> Any:
-        """
-        Ejecuta una petición HTTP contra Binance.
-
-        Reintenta errores temporales:
-        - HTTP 429
-        - HTTP 418
-        - HTTP 500
-        - HTTP 502
-        - HTTP 503
-        - HTTP 504
-        - errores de conexión/timeout
-
-        No intenta ocultar errores 4xx permanentes.
-        """
 
         url = f"{self.BASE_URL}{endpoint}"
 
         last_error: Exception | None = None
 
-        for attempt in range(1, self.max_retries + 1):
+        for attempt in range(
+            1,
+            self.max_retries + 1,
+        ):
 
             try:
                 response = self.session.get(
@@ -202,40 +180,41 @@ class BinanceProvider:
 
                 status = response.status_code
 
-                # --------------------------------------------
+                # ------------------------------------------------
                 # RATE LIMIT
-                # --------------------------------------------
+                # ------------------------------------------------
 
                 if status in {418, 429}:
+
+                    if attempt >= self.max_retries:
+                        raise BinanceProviderError(
+                            f"Binance respondió HTTP "
+                            f"{status} después de "
+                            f"{self.max_retries} intentos."
+                        )
 
                     retry_after = response.headers.get(
                         "Retry-After"
                     )
 
-                    if retry_after:
-                        try:
-                            delay = float(retry_after)
-                        except ValueError:
-                            delay = 2.0
-                    else:
-                        delay = min(
-                            2 ** (attempt - 1),
-                            8.0,
+                    try:
+                        delay = (
+                            float(retry_after)
+                            if retry_after
+                            else 2 ** (attempt - 1)
                         )
+                    except ValueError:
+                        delay = 2 ** (attempt - 1)
 
-                    if attempt < self.max_retries:
-                        time.sleep(delay)
-                        continue
-
-                    raise BinanceProviderError(
-                        "Binance respondió con "
-                        f"HTTP {status} después de "
-                        f"{self.max_retries} intentos."
+                    time.sleep(
+                        min(delay, 8.0)
                     )
 
-                # --------------------------------------------
-                # ERRORES TEMPORALES DEL SERVIDOR
-                # --------------------------------------------
+                    continue
+
+                # ------------------------------------------------
+                # ERRORES TEMPORALES
+                # ------------------------------------------------
 
                 if status in {
                     500,
@@ -245,36 +224,36 @@ class BinanceProvider:
                 }:
 
                     if attempt < self.max_retries:
-                        delay = min(
-                            2 ** (attempt - 1),
-                            8.0,
+                        time.sleep(
+                            min(
+                                2 ** (attempt - 1),
+                                8.0,
+                            )
                         )
-
-                        time.sleep(delay)
                         continue
 
                     raise BinanceProviderError(
-                        "Binance respondió con "
-                        f"HTTP {status} después de "
+                        f"Binance respondió HTTP "
+                        f"{status} después de "
                         f"{self.max_retries} intentos."
                     )
 
-                # --------------------------------------------
+                # ------------------------------------------------
                 # OTROS ERRORES HTTP
-                # --------------------------------------------
+                # ------------------------------------------------
 
                 response.raise_for_status()
 
-                # --------------------------------------------
+                # ------------------------------------------------
                 # JSON
-                # --------------------------------------------
+                # ------------------------------------------------
 
                 try:
                     return response.json()
+
                 except ValueError as exc:
                     raise BinanceProviderError(
-                        "Binance devolvió una respuesta "
-                        "que no es JSON válido."
+                        "Binance devolvió JSON inválido."
                     ) from exc
 
             except (
@@ -285,12 +264,12 @@ class BinanceProvider:
                 last_error = exc
 
                 if attempt < self.max_retries:
-                    delay = min(
-                        2 ** (attempt - 1),
-                        8.0,
+                    time.sleep(
+                        min(
+                            2 ** (attempt - 1),
+                            8.0,
+                        )
                     )
-
-                    time.sleep(delay)
                     continue
 
                 break
@@ -307,8 +286,7 @@ class BinanceProvider:
             ) from last_error
 
         raise BinanceProviderError(
-            "No se pudo consultar Binance por "
-            "un error desconocido."
+            "No se pudo consultar Binance."
         )
 
     # ============================================================
@@ -320,28 +298,15 @@ class BinanceProvider:
         raw: list[Any],
         now_ms: int,
     ) -> Candle:
-        """
-        Convierte una fila Binance Kline a Candle.
-
-        Estructura relevante Binance:
-
-        0  open time
-        1  open
-        2  high
-        3  low
-        4  close
-        5  volume
-        6  close time
-        """
 
         if not isinstance(raw, list):
             raise BinanceProviderError(
-                "Una vela Binance no tiene formato de lista."
+                "La vela Binance no es una lista."
             )
 
         if len(raw) < 7:
             raise BinanceProviderError(
-                "Una vela Binance no contiene "
+                "La vela Binance no contiene "
                 "los campos necesarios."
             )
 
@@ -362,12 +327,12 @@ class BinanceProvider:
         ) as exc:
 
             raise BinanceProviderError(
-                "No se pudo convertir una vela "
+                "No se pudo convertir la vela "
                 "Binance a valores numéricos."
             ) from exc
 
         # --------------------------------------------------------
-        # VALIDACIÓN OHLCV
+        # VALIDACIÓN NUMÉRICA
         # --------------------------------------------------------
 
         values = (
@@ -378,6 +343,249 @@ class BinanceProvider:
             volume,
         )
 
-        for value in values:
-            if value != value:
-                raise BinanceProvider
+        if not all(
+            math.isfinite(value)
+            for value in values
+        ):
+            raise BinanceProviderError(
+                "La vela contiene valores no finitos."
+            )
+
+        if open_price <= 0:
+            raise BinanceProviderError(
+                "Open inválido."
+            )
+
+        if high_price <= 0:
+            raise BinanceProviderError(
+                "High inválido."
+            )
+
+        if low_price <= 0:
+            raise BinanceProviderError(
+                "Low inválido."
+            )
+
+        if close_price <= 0:
+            raise BinanceProviderError(
+                "Close inválido."
+            )
+
+        if volume < 0:
+            raise BinanceProviderError(
+                "Volume inválido."
+            )
+
+        # --------------------------------------------------------
+        # VALIDACIÓN OHLC
+        # --------------------------------------------------------
+
+        if high_price < max(
+            open_price,
+            close_price,
+        ):
+            raise BinanceProviderError(
+                "High no contiene Open/Close."
+            )
+
+        if low_price > min(
+            open_price,
+            close_price,
+        ):
+            raise BinanceProviderError(
+                "Low no contiene Open/Close."
+            )
+
+        if high_price < low_price:
+            raise BinanceProviderError(
+                "High no puede ser menor que Low."
+            )
+
+        if close_time < timestamp:
+            raise BinanceProviderError(
+                "Close time inválido."
+            )
+
+        return Candle(
+            timestamp=timestamp,
+            open=open_price,
+            high=high_price,
+            low=low_price,
+            close=close_price,
+            volume=volume,
+            is_closed=(
+                close_time <= now_ms
+            ),
+        )
+
+    # ============================================================
+    # OBTENER KLINES
+    # ============================================================
+
+    def get_klines(
+        self,
+        symbol: str,
+        interval: str,
+        limit: int = 200,
+    ) -> list[Candle]:
+
+        symbol = self.normalize_symbol(
+            symbol
+        )
+
+        interval = self.validate_interval(
+            interval
+        )
+
+        limit = self.validate_limit(
+            limit
+        )
+
+        params = {
+            "symbol": symbol,
+            "interval": interval,
+            "limit": limit,
+        }
+
+        raw_data = self._request(
+            self.KLINES_ENDPOINT,
+            params,
+        )
+
+        if not isinstance(raw_data, list):
+            raise BinanceProviderError(
+                "La respuesta Binance no es "
+                "una lista de velas."
+            )
+
+        now_ms = int(
+            time.time() * 1000
+        )
+
+        candles: list[Candle] = []
+
+        for raw in raw_data:
+
+            candle = self._parse_candle(
+                raw,
+                now_ms,
+            )
+
+            candles.append(candle)
+
+        # --------------------------------------------------------
+        # ORDEN CRONOLÓGICO
+        # --------------------------------------------------------
+
+        candles.sort(
+            key=lambda candle: candle.timestamp
+        )
+
+        # --------------------------------------------------------
+        # TIMESTAMPS DUPLICADOS
+        # --------------------------------------------------------
+
+        timestamps = [
+            candle.timestamp
+            for candle in candles
+        ]
+
+        if len(timestamps) != len(
+            set(timestamps)
+        ):
+            raise BinanceProviderError(
+                "Binance devolvió timestamps duplicados."
+            )
+
+        return candles
+
+    # ============================================================
+    # MÚLTIPLES TIMEFRAMES
+    # ============================================================
+
+    def get_multi_timeframe(
+        self,
+        symbol: str,
+        intervals: tuple[str, ...] = (
+            "15m",
+            "1h",
+            "4h",
+            "1d",
+        ),
+        limit: int = 200,
+    ) -> dict[str, list[Candle]]:
+
+        if not intervals:
+            raise ValueError(
+                "Debe existir al menos un timeframe."
+            )
+
+        result: dict[str, list[Candle]] = {}
+
+        for interval in intervals:
+
+            interval = self.validate_interval(
+                interval
+            )
+
+            result[interval] = self.get_klines(
+                symbol=symbol,
+                interval=interval,
+                limit=limit,
+            )
+
+        return result
+
+    # ============================================================
+    # ÚLTIMA VELA
+    # ============================================================
+
+    def get_last_candle(
+        self,
+        symbol: str,
+        interval: str,
+    ) -> Candle:
+
+        candles = self.get_klines(
+            symbol=symbol,
+            interval=interval,
+            limit=2,
+        )
+
+        if not candles:
+            raise BinanceProviderError(
+                f"No hay velas para "
+                f"{symbol} {interval}."
+            )
+
+        return candles[-1]
+
+    # ============================================================
+    # ÚLTIMA VELA CERRADA
+    # ============================================================
+
+    def get_last_closed_candle(
+        self,
+        symbol: str,
+        interval: str,
+    ) -> Candle:
+
+        candles = self.get_klines(
+            symbol=symbol,
+            interval=interval,
+            limit=3,
+        )
+
+        closed = [
+            candle
+            for candle in candles
+            if candle.is_closed
+        ]
+
+        if not closed:
+            raise BinanceProviderError(
+                f"No hay una vela cerrada para "
+                f"{symbol} {interval}."
+            )
+
+        return closed[-1]
