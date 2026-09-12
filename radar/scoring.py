@@ -239,4 +239,813 @@ def score_rsi(
 # SCORE MOMENTUM
 # ============================================================
 
-def score
+def score_momentum(
+    momentum_value: float | None,
+) -> float:
+    """
+    Convierte momentum porcentual en score.
+
+    +5% -> 100
+     0% -> 50
+    -5% -> 0
+
+    Movimientos superiores a ese rango se limitan.
+    """
+
+    value = _safe_float(
+        momentum_value
+    )
+
+    if value is None:
+        return SCORE_NEUTRAL
+
+    return _score_from_centered_value(
+        value,
+        scale=5.0,
+    )
+
+
+# ============================================================
+# COMPONENTE MOMENTUM
+# ============================================================
+
+def score_momentum_component(
+    rsi_value: float | None,
+    momentum_value: float | None,
+) -> float:
+    """
+    Combina RSI y momentum.
+
+    RSI       = 40%
+    Momentum  = 60%
+    """
+
+    rsi_score = score_rsi(
+        rsi_value
+    )
+
+    momentum_score = score_momentum(
+        momentum_value
+    )
+
+    return _clamp(
+        rsi_score * 0.40
+        + momentum_score * 0.60
+    )
+
+
+# ============================================================
+# SCORE DE VOLUMEN
+# ============================================================
+
+def score_volume(
+    relative_volume: float | None,
+    price_direction: str | None = None,
+) -> float:
+    """
+    Evalúa volumen relativo.
+
+    Regla fundamental:
+
+        VOLUMEN ALTO != ALCISTA
+
+    El volumen debe interpretarse junto con la dirección
+    del movimiento.
+
+    Esto evita exactamente el problema que encontramos:
+    relative_volume20 = 3.0 no puede convertirse
+    automáticamente en una señal alcista.
+    """
+
+    volume = _safe_float(
+        relative_volume
+    )
+
+    if volume is None:
+        return SCORE_NEUTRAL
+
+    if volume < 0:
+        return SCORE_NEUTRAL
+
+    direction = _normalize_text(
+        price_direction
+    )
+
+    # --------------------------------------------------------
+    # VOLUMEN MUY BAJO
+    # --------------------------------------------------------
+
+    if volume < 0.70:
+        base_score = 43.0
+
+    # --------------------------------------------------------
+    # VOLUMEN BAJO / NORMAL
+    # --------------------------------------------------------
+
+    elif volume < 1.00:
+        base_score = 47.0
+
+    elif volume < 1.20:
+        base_score = 52.0
+
+    # --------------------------------------------------------
+    # VOLUMEN ELEVADO
+    # --------------------------------------------------------
+
+    elif volume < 1.50:
+        base_score = 58.0
+
+    elif volume < 2.00:
+        base_score = 65.0
+
+    # --------------------------------------------------------
+    # VOLUMEN EXTREMO
+    # --------------------------------------------------------
+
+    else:
+        base_score = 60.0
+
+    # --------------------------------------------------------
+    # MOVIMIENTO ALCISTA
+    # --------------------------------------------------------
+
+    if direction in {
+        "BULLISH",
+        "UP",
+        "GREEN",
+        "BUY",
+        "ALCISTA",
+    }:
+        if volume >= 2.00:
+            return 80.0
+
+        return _clamp(
+            base_score + 10.0
+        )
+
+    # --------------------------------------------------------
+    # MOVIMIENTO BAJISTA
+    # --------------------------------------------------------
+
+    if direction in {
+        "BEARISH",
+        "DOWN",
+        "RED",
+        "SELL",
+        "BAJISTA",
+    }:
+        return _clamp(
+            base_score - 15.0
+        )
+
+    # --------------------------------------------------------
+    # DIRECCIÓN DESCONOCIDA
+    # --------------------------------------------------------
+    #
+    # No asumimos que volumen alto significa compra.
+    #
+
+    return _clamp(
+        min(base_score, 65.0)
+    )
+
+
+# ============================================================
+# SCORE DE ESTRUCTURA
+# ============================================================
+
+def score_structure(
+    structure: Mapping[str, Any] | None,
+) -> float:
+    """
+    Convierte estructura de mercado en score 0-100.
+
+    Considera:
+
+    - tendencia
+    - bias
+    - breakout confirmado
+    - breakdown confirmado
+    - breakout potencial
+    - breakdown potencial
+    """
+
+    if structure is None:
+        return SCORE_NEUTRAL
+
+    if not isinstance(
+        structure,
+        Mapping,
+    ):
+        raise TypeError(
+            "structure debe ser un Mapping."
+        )
+
+    confirmed_breakout = bool(
+        structure.get(
+            "confirmed_breakout",
+            structure.get(
+                "is_confirmed_breakout",
+                False,
+            ),
+        )
+    )
+
+    confirmed_breakdown = bool(
+        structure.get(
+            "confirmed_breakdown",
+            structure.get(
+                "is_confirmed_breakdown",
+                False,
+            ),
+        )
+    )
+
+    potential_breakout = bool(
+        structure.get(
+            "potential_breakout",
+            structure.get(
+                "is_potential_breakout",
+                False,
+            ),
+        )
+    )
+
+    potential_breakdown = bool(
+        structure.get(
+            "potential_breakdown",
+            structure.get(
+                "is_potential_breakdown",
+                False,
+            ),
+        )
+    )
+
+    trend = _normalize_text(
+        structure.get("trend")
+    )
+
+    bias = _normalize_text(
+        structure.get("bias")
+    )
+
+    score = SCORE_NEUTRAL
+
+    # --------------------------------------------------------
+    # TENDENCIA
+    # --------------------------------------------------------
+
+    bullish_terms = {
+        "BULLISH",
+        "UPTREND",
+        "ALCISTA",
+        "LONG",
+    }
+
+    bearish_terms = {
+        "BEARISH",
+        "DOWNTREND",
+        "BAJISTA",
+        "SHORT",
+    }
+
+    if trend in bullish_terms:
+        score += 15.0
+
+    elif trend in bearish_terms:
+        score -= 15.0
+
+    # --------------------------------------------------------
+    # BIAS
+    # --------------------------------------------------------
+
+    if bias in bullish_terms:
+        score += 10.0
+
+    elif bias in bearish_terms:
+        score -= 10.0
+
+    # --------------------------------------------------------
+    # BREAKOUT CONFIRMADO
+    # --------------------------------------------------------
+
+    if confirmed_breakout:
+        score += 20.0
+
+    # --------------------------------------------------------
+    # BREAKDOWN CONFIRMADO
+    # --------------------------------------------------------
+
+    if confirmed_breakdown:
+        score -= 20.0
+
+    # --------------------------------------------------------
+    # BREAKOUT POTENCIAL
+    # --------------------------------------------------------
+
+    if (
+        potential_breakout
+        and not confirmed_breakout
+    ):
+        score += 7.0
+
+    # --------------------------------------------------------
+    # BREAKDOWN POTENCIAL
+    # --------------------------------------------------------
+
+    if (
+        potential_breakdown
+        and not confirmed_breakdown
+    ):
+        score -= 7.0
+
+    return _clamp(
+        score
+    )
+
+
+# ============================================================
+# SCORE VOLATILIDAD
+# ============================================================
+
+def score_volatility(
+    atr_percent: float | None,
+    volatility_percent: float | None,
+) -> float:
+    """
+    Evalúa la calidad de las condiciones de volatilidad.
+
+    La volatilidad NO determina por sí sola la dirección.
+
+    Volatilidad demasiado alta = mayor riesgo.
+    """
+
+    atr = _safe_float(
+        atr_percent
+    )
+
+    historical = _safe_float(
+        volatility_percent
+    )
+
+    values = [
+        value
+        for value in (
+            atr,
+            historical,
+        )
+        if value is not None
+        and value >= 0
+    ]
+
+    if not values:
+        return SCORE_NEUTRAL
+
+    current_volatility = (
+        sum(values)
+        / len(values)
+    )
+
+    # --------------------------------------------------------
+    # MUY BAJA
+    # --------------------------------------------------------
+
+    if current_volatility < 1.0:
+        return 48.0
+
+    # --------------------------------------------------------
+    # NORMAL
+    # --------------------------------------------------------
+
+    if current_volatility < 2.0:
+        return 60.0
+
+    # --------------------------------------------------------
+    # ELEVADA
+    # --------------------------------------------------------
+
+    if current_volatility < 4.0:
+        return 58.0
+
+    # --------------------------------------------------------
+    # MUY ELEVADA
+    # --------------------------------------------------------
+
+    if current_volatility < 7.0:
+        return 42.0
+
+    # --------------------------------------------------------
+    # EXTREMA
+    # --------------------------------------------------------
+
+    return 25.0
+
+
+# ============================================================
+# SCORE TÉCNICO PRINCIPAL
+# ============================================================
+
+def calculate_technical_score(
+    indicators: Mapping[str, Any],
+    structure: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Calcula el score técnico principal del Radar.
+
+    El resultado contiene:
+
+        technical_score
+        trend_score
+        momentum_score
+        structure_score
+        volume_score
+        volatility_score
+        confidence
+        data_completeness
+        directional_consistency
+        bias
+        signal
+        quality
+        components
+
+    IMPORTANTE:
+
+        technical_score != confidence
+
+    technical_score:
+        representa el sesgo técnico.
+
+    confidence:
+        representa la calidad y consistencia de la lectura.
+    """
+
+    if not isinstance(
+        indicators,
+        Mapping,
+    ):
+        raise TypeError(
+            "indicators debe ser un Mapping."
+        )
+
+    # ========================================================
+    # 1. TENDENCIA
+    # ========================================================
+
+    trend_score = score_trend(
+        indicators.get("trend")
+    )
+
+    # ========================================================
+    # 2. MOMENTUM
+    # ========================================================
+
+    momentum_score = score_momentum_component(
+        rsi_value=indicators.get(
+            "rsi14"
+        ),
+        momentum_value=indicators.get(
+            "momentum10"
+        ),
+    )
+
+    # ========================================================
+    # 3. ESTRUCTURA
+    # ========================================================
+
+    structure_score = score_structure(
+        structure
+    )
+
+    # ========================================================
+    # 4. DIRECCIÓN
+    # ========================================================
+
+    candle_direction = indicators.get(
+        "candle_direction"
+    )
+
+    # Si no existe dirección de vela utilizamos
+    # la tendencia como contexto.
+    if candle_direction is None:
+        candle_direction = indicators.get(
+            "trend"
+        )
+
+    # ========================================================
+    # 5. VOLUMEN
+    # ========================================================
+
+    volume_score = score_volume(
+        relative_volume=indicators.get(
+            "relative_volume20"
+        ),
+        price_direction=candle_direction,
+    )
+
+    # ========================================================
+    # 6. VOLATILIDAD
+    # ========================================================
+
+    volatility_score = score_volatility(
+        atr_percent=indicators.get(
+            "atr_percent"
+        ),
+        volatility_percent=indicators.get(
+            "volatility20"
+        ),
+    )
+
+    # ========================================================
+    # 7. SCORE PONDERADO
+    # ========================================================
+
+    technical_score = (
+        trend_score * WEIGHT_TREND
+        + momentum_score * WEIGHT_MOMENTUM
+        + structure_score * WEIGHT_STRUCTURE
+        + volume_score * WEIGHT_VOLUME
+        + volatility_score * WEIGHT_VOLATILITY
+    )
+
+    technical_score = _clamp(
+        technical_score
+    )
+
+    # ========================================================
+    # 8. PROTECCIÓN DE DIRECCIÓN
+    # ========================================================
+    #
+    # Si la tendencia y momentum son claramente bajistas,
+    # el score no debe terminar artificialmente en neutral
+    # por componentes secundarios.
+    #
+    # Lo mismo para una tendencia alcista claramente confirmada.
+    #
+
+    trend_text = _normalize_text(
+        indicators.get("trend")
+    )
+
+    if (
+        trend_text in {
+            "BEARISH",
+            "BEARISH_STRONG",
+        }
+        and momentum_score <= 40.0
+        and technical_score > 44.0
+    ):
+        technical_score = 44.0
+
+    if (
+        trend_text in {
+            "BULLISH",
+            "BULLISH_STRONG",
+        }
+        and momentum_score >= 60.0
+        and technical_score < 56.0
+    ):
+        technical_score = 56.0
+
+    technical_score = _clamp(
+        technical_score
+    )
+
+    # ========================================================
+    # 9. COMPLETITUD DE DATOS
+    # ========================================================
+
+    required_fields = (
+        "price",
+        "ema20",
+        "ema50",
+        "rsi14",
+        "atr14",
+        "momentum10",
+        "relative_volume20",
+    )
+
+    available_count = sum(
+        1
+        for field in required_fields
+        if indicators.get(field) is not None
+    )
+
+    data_completeness = (
+        available_count
+        / len(required_fields)
+    ) * 100.0
+
+    # ========================================================
+    # 10. VELA CERRADA
+    # ========================================================
+
+    last_candle_closed = indicators.get(
+        "last_candle_closed"
+    )
+
+    if last_candle_closed is True:
+        closed_factor = 1.00
+
+    elif last_candle_closed is False:
+        # Una vela abierta todavía puede cambiar.
+        closed_factor = 0.70
+
+    else:
+        closed_factor = 0.85
+
+    # ========================================================
+    # 11. CONSISTENCIA DIRECCIONAL
+    # ========================================================
+
+    component_scores = (
+        trend_score,
+        momentum_score,
+        structure_score,
+        volume_score,
+    )
+
+    bullish_components = sum(
+        1
+        for value in component_scores
+        if value >= 60.0
+    )
+
+    bearish_components = sum(
+        1
+        for value in component_scores
+        if value <= 40.0
+    )
+
+    directional_consistency = (
+        max(
+            bullish_components,
+            bearish_components,
+        )
+        / len(component_scores)
+    ) * 100.0
+
+    # ========================================================
+    # 12. CONFIANZA
+    # ========================================================
+
+    confidence = (
+        data_completeness * 0.50
+        + directional_consistency * 0.30
+        + (closed_factor * 100.0) * 0.20
+    )
+
+    confidence = _clamp(
+        confidence
+    )
+
+    # ========================================================
+    # 13. BIAS
+    # ========================================================
+
+    if technical_score >= 65.0:
+        bias = "BULLISH"
+
+    elif technical_score <= 35.0:
+        bias = "BEARISH"
+
+    else:
+        bias = "NEUTRAL"
+
+    # ========================================================
+    # 14. CALIDAD
+    # ========================================================
+
+    if confidence >= 80.0:
+        quality = "HIGH"
+
+    elif confidence >= 60.0:
+        quality = "MEDIUM"
+
+    elif confidence >= 40.0:
+        quality = "LOW"
+
+    else:
+        quality = "VERY_LOW"
+
+    # ========================================================
+    # 15. SEÑAL
+    # ========================================================
+
+    if (
+        technical_score >= 65.0
+        and confidence >= 70.0
+    ):
+        signal = "BULLISH_CONFIRMED"
+
+    elif (
+        technical_score <= 35.0
+        and confidence >= 70.0
+    ):
+        signal = "BEARISH_CONFIRMED"
+
+    elif technical_score > 55.0:
+        signal = "BULLISH_BIAS"
+
+    elif technical_score < 45.0:
+        signal = "BEARISH_BIAS"
+
+    else:
+        signal = "NEUTRAL"
+
+    # ========================================================
+    # 16. RESULTADO
+    # ========================================================
+
+    return {
+        "technical_score": round(
+            technical_score,
+            4,
+        ),
+
+        "trend_score": round(
+            trend_score,
+            4,
+        ),
+
+        "momentum_score": round(
+            momentum_score,
+            4,
+        ),
+
+        "structure_score": round(
+            structure_score,
+            4,
+        ),
+
+        "volume_score": round(
+            volume_score,
+            4,
+        ),
+
+        "volatility_score": round(
+            volatility_score,
+            4,
+        ),
+
+        "confidence": round(
+            confidence,
+            4,
+        ),
+
+        "data_completeness": round(
+            data_completeness,
+            4,
+        ),
+
+        "directional_consistency": round(
+            directional_consistency,
+            4,
+        ),
+
+        "bias": bias,
+
+        "signal": signal,
+
+        "quality": quality,
+
+        "components": {
+            "trend": round(
+                trend_score,
+                4,
+            ),
+            "momentum": round(
+                momentum_score,
+                4,
+            ),
+            "structure": round(
+                structure_score,
+                4,
+            ),
+            "volume": round(
+                volume_score,
+                4,
+            ),
+            "volatility": round(
+                volatility_score,
+                4,
+            ),
+        },
+    }
+
+
+# ============================================================
+# ALIAS PÚBLICO
+# ============================================================
+
+def score_indicators(
+    indicators: Mapping[str, Any],
+    structure: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Alias semántico de calculate_technical_score().
+    """
+
+    return calculate_technical_score(
+        indicators=indicators,
+        structure=structure,
+    )
