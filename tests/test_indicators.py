@@ -218,4 +218,23 @@ def test_true_range_uses_previous_close() -> None:
     result = true_range(
         high=110.0,
         low=100.0,
-        previous_close=90
+        previous_close=90.0,
+    )
+
+    assert_close(
+        result,
+        20.0,
+    )
+
+
+def test_true_range_handles_gap_down() -> None:
+    result = true_range(
+        high=100.0,
+        low=90.0,
+        previous_close=110.0,
+    )
+
+    assert_close(
+        result,
+        20.0,
+    )
