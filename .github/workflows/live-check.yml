@@ -21,6 +21,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Ejecutar prueba real
-        run: |
-          python -u scripts/live_provider_check.py
+- name: Ejecutar prueba real
+  run: |
+    PYTHONPATH=. python -u scripts/live_provider_check.py
