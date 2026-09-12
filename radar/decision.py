@@ -5,12 +5,8 @@ from typing import Any, Mapping
 
 
 class DecisionError(Exception):
-    """Error base del motor de decisiones."""
+    pass
 
-
-# ============================================================
-# DECISIONES
-# ============================================================
 
 DECISION_BUY = "BUY"
 DECISION_ACCUMULATE = "ACCUMULATE"
@@ -19,19 +15,11 @@ DECISION_SPECULATIVE = "SPECULATIVE"
 DECISION_AVOID = "AVOID"
 
 
-# ============================================================
-# REGÍMENES DE MERCADO
-# ============================================================
-
 REGIME_RISK_ON = "RISK_ON"
 REGIME_NEUTRAL = "NEUTRAL"
 REGIME_RISK_OFF = "RISK_OFF"
 REGIME_HIGH_RISK = "HIGH_RISK"
 
-
-# ============================================================
-# RESULTADO
-# ============================================================
 
 @dataclass(frozen=True)
 class DecisionResult:
@@ -52,10 +40,6 @@ class DecisionResult:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
-
-# ============================================================
-# UTILIDADES
-# ============================================================
 
 def _number(
     value: Any,
@@ -166,14 +150,9 @@ def _timeframe_bias(
     return "NEUTRAL"
 
 
-# ============================================================
-# MULTI-TIMEFRAME ALIGNMENT
-# ============================================================
-
 def calculate_timeframe_alignment(
     timeframes: Mapping[str, Any],
 ) -> float:
-
     if not isinstance(timeframes, Mapping):
         raise TypeError(
             "timeframes debe ser un Mapping."
@@ -186,10 +165,9 @@ def calculate_timeframe_alignment(
         "15m": 0.15,
     }
 
-    available: list[tuple[float, float]] = []
+    available = []
 
     for timeframe, weight in weights.items():
-
         data = timeframes.get(timeframe)
 
         if not isinstance(data, Mapping):
@@ -198,19 +176,13 @@ def calculate_timeframe_alignment(
         bias = _timeframe_bias(data)
 
         if bias == "BULLISH":
-            available.append(
-                (weight, 1.0)
-            )
+            available.append((weight, 1.0))
 
         elif bias == "BEARISH":
-            available.append(
-                (weight, -1.0)
-            )
+            available.append((weight, -1.0))
 
         else:
-            available.append(
-                (weight, 0.0)
-            )
+            available.append((weight, 0.0))
 
     if not available:
         return 50.0
@@ -235,20 +207,15 @@ def calculate_timeframe_alignment(
     )
 
 
-# ============================================================
-# CALIDAD DE TENDENCIA
-# ============================================================
-
 def calculate_trend_quality(
     timeframes: Mapping[str, Any],
 ) -> float:
-
     if not isinstance(timeframes, Mapping):
         raise TypeError(
             "timeframes debe ser un Mapping."
         )
 
-    biases: list[str] = []
+    biases = []
 
     for timeframe in (
         "1d",
@@ -293,17 +260,12 @@ def calculate_trend_quality(
     return _clamp(consistency)
 
 
-# ============================================================
-# RÉGIMEN DE MERCADO
-# ============================================================
-
 def determine_market_regime(
     technical_score: float,
     confidence: float,
     trend_quality: float,
     volatility_score: float = 50.0,
 ) -> str:
-
     score = _clamp(
         technical_score
     )
@@ -320,18 +282,15 @@ def determine_market_regime(
         volatility_score
     )
 
-    # Volatilidad extrema tiene prioridad.
     if volatility <= 25.0:
         return REGIME_HIGH_RISK
 
-    # Mercado claramente deteriorado.
     if (
         score <= 35.0
         and trend <= 50.0
     ):
         return REGIME_RISK_OFF
 
-    # Mercado alcista de calidad.
     if (
         score >= 65.0
         and trend >= 70.0
@@ -342,15 +301,10 @@ def determine_market_regime(
     return REGIME_NEUTRAL
 
 
-# ============================================================
-# CONFIRMACIONES
-# ============================================================
-
 def calculate_confirmation_score(
     strategy: Mapping[str, Any],
     risk: Mapping[str, Any] | None = None,
 ) -> float:
-
     if not isinstance(strategy, Mapping):
         raise TypeError(
             "strategy debe ser un Mapping."
@@ -423,16 +377,11 @@ def calculate_confirmation_score(
     return _clamp(score)
 
 
-# ============================================================
-# NIVEL DE RIESGO
-# ============================================================
-
 def determine_risk_level(
     risk: Mapping[str, Any] | None,
     strategy: Mapping[str, Any],
     market_regime: str,
 ) -> str:
-
     risk_data = _mapping(
         risk,
         "risk",
@@ -486,14 +435,9 @@ def determine_risk_level(
     return "LOW"
 
 
-# ============================================================
-# RIESGO / BENEFICIO
-# ============================================================
-
 def _risk_reward_ok(
     risk: Mapping[str, Any] | None,
 ) -> bool:
-
     if not isinstance(
         risk,
         Mapping,
@@ -501,325 +445,3 @@ def _risk_reward_ok(
         return False
 
     rr = _number(
-        risk.get("risk_reward_tp2")
-    )
-
-    if rr is None:
-        return False
-
-    return rr >= 1.5
-
-
-# ============================================================
-# MOTOR PRINCIPAL
-# ============================================================
-
-def build_decision(
-    scoring: Mapping[str, Any],
-    strategy: Mapping[str, Any],
-    risk: Mapping[str, Any] | None = None,
-    timeframes: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-
-    if not isinstance(
-        scoring,
-        Mapping,
-    ):
-        raise TypeError(
-            "scoring debe ser un Mapping."
-        )
-
-    if not isinstance(
-        strategy,
-        Mapping,
-    ):
-        raise TypeError(
-            "strategy debe ser un Mapping."
-        )
-
-    risk_data = _mapping(
-        risk,
-        "risk",
-    )
-
-    timeframe_data = _mapping(
-        timeframes,
-        "timeframes",
-    )
-
-    technical_score = _number(
-        scoring.get(
-            "technical_score"
-        ),
-        50.0,
-    )
-
-    confidence = _number(
-        scoring.get(
-            "confidence"
-        ),
-        0.0,
-    )
-
-    volatility_score = _number(
-        scoring.get(
-            "volatility_score"
-        ),
-        50.0,
-    )
-
-    technical_score = _clamp(
-        technical_score
-    )
-
-    confidence = _clamp(
-        confidence
-    )
-
-    volatility_score = _clamp(
-        volatility_score
-    )
-
-    # --------------------------------------------------------
-    # ANÁLISIS MULTI-TIMEFRAME
-    # --------------------------------------------------------
-
-    timeframe_alignment = (
-        calculate_timeframe_alignment(
-            timeframe_data
-        )
-    )
-
-    trend_quality = (
-        calculate_trend_quality(
-            timeframe_data
-        )
-    )
-
-    # --------------------------------------------------------
-    # RÉGIMEN
-    # --------------------------------------------------------
-
-    market_regime = (
-        determine_market_regime(
-            technical_score=technical_score,
-            confidence=confidence,
-            trend_quality=trend_quality,
-            volatility_score=volatility_score,
-        )
-    )
-
-    # --------------------------------------------------------
-    # CONFIRMACIÓN
-    # --------------------------------------------------------
-
-    confirmation_score = (
-        calculate_confirmation_score(
-            strategy=strategy,
-            risk=risk_data,
-        )
-    )
-
-    # --------------------------------------------------------
-    # RIESGO
-    # --------------------------------------------------------
-
-    risk_level = (
-        determine_risk_level(
-            risk=risk_data,
-            strategy=strategy,
-            market_regime=market_regime,
-        )
-    )
-
-    confirmations: list[str] = []
-    blockers: list[str] = []
-    warnings: list[str] = []
-
-    # --------------------------------------------------------
-    # ALIGNMENT
-    # --------------------------------------------------------
-
-    if timeframe_alignment >= 70.0:
-
-        confirmations.append(
-            "Temporalidades alineadas al alza."
-        )
-
-    elif timeframe_alignment <= 30.0:
-
-        blockers.append(
-            "Temporalidades alineadas a la baja."
-        )
-
-    else:
-
-        warnings.append(
-            "Las temporalidades presentan conflicto."
-        )
-
-    # --------------------------------------------------------
-    # TREND QUALITY
-    # --------------------------------------------------------
-
-    if trend_quality >= 75.0:
-
-        confirmations.append(
-            "Alta consistencia de tendencia."
-        )
-
-    elif trend_quality < 50.0:
-
-        warnings.append(
-            "Baja consistencia de tendencia."
-        )
-
-    # --------------------------------------------------------
-    # CONFIRMACIONES DE STRATEGY
-    # --------------------------------------------------------
-
-    strategy_confirmations = strategy.get(
-        "confirmations",
-        (),
-    )
-
-    if isinstance(
-        strategy_confirmations,
-        (list, tuple, set),
-    ):
-
-        confirmations.extend(
-            str(item)
-            for item in strategy_confirmations
-        )
-
-    # --------------------------------------------------------
-    # BLOQUEADORES DE STRATEGY
-    # --------------------------------------------------------
-
-    strategy_blockers = strategy.get(
-        "blockers",
-        (),
-    )
-
-    if isinstance(
-        strategy_blockers,
-        (list, tuple, set),
-    ):
-
-        blockers.extend(
-            str(item)
-            for item in strategy_blockers
-        )
-
-    # --------------------------------------------------------
-    # VELAS ABIERTAS
-    # --------------------------------------------------------
-
-    open_candle = False
-
-    for data in timeframe_data.values():
-
-        if not isinstance(
-            data,
-            Mapping,
-        ):
-            continue
-
-        if not _closed(data):
-
-            open_candle = True
-            break
-
-    if open_candle:
-
-        warnings.append(
-            "Existe al menos una vela abierta."
-        )
-
-    # --------------------------------------------------------
-    # DECISIÓN DE STRATEGY
-    # --------------------------------------------------------
-
-    strategy_decision = _text(
-        strategy.get("decision")
-    )
-
-    if strategy_decision in {
-        DECISION_BUY,
-        DECISION_ACCUMULATE,
-    }:
-
-        if _risk_reward_ok(
-            risk_data
-        ):
-
-            confirmations.append(
-                "R:R de TP2 cumple el mínimo 1.5:1."
-            )
-
-        else:
-
-            blockers.append(
-                "R:R insuficiente para la operación."
-            )
-
-    # --------------------------------------------------------
-    # DECISIÓN FINAL
-    # --------------------------------------------------------
-
-    final_decision = strategy_decision
-
-    reason = (
-        "La decisión se mantiene según Strategy."
-    )
-
-    # --------------------------------------------------------
-    # AVOID
-    # --------------------------------------------------------
-
-    if strategy_decision == DECISION_AVOID:
-
-        final_decision = DECISION_AVOID
-
-        reason = (
-            "Strategy bloquea la operación "
-            "por condiciones adversas."
-        )
-
-    # --------------------------------------------------------
-    # RIESGO EXTREMO
-    # --------------------------------------------------------
-
-    elif market_regime == REGIME_HIGH_RISK:
-
-        final_decision = DECISION_AVOID
-
-        reason = (
-            "El régimen de mercado presenta "
-            "riesgo extremo. La operación queda bloqueada."
-        )
-
-    # --------------------------------------------------------
-    # BUY
-    # --------------------------------------------------------
-
-    elif strategy_decision == DECISION_BUY:
-
-        if risk_level == "EXTREME":
-
-            final_decision = DECISION_AVOID
-
-            reason = (
-                "La señal alcista queda anulada "
-                "por riesgo extremo."
-            )
-
-        elif timeframe_alignment < 55.0:
-
-            final_decision = DECISION_WAIT
-
-            reason = (
-            "La señal alcista carece de suficiente "
-            "alineación multi-temporal."
-        )
