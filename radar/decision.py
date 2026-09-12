@@ -5,7 +5,7 @@ from typing import Any, Mapping
 
 
 class DecisionError(Exception):
-    """Error base del motor de decisión."""
+    pass
 
 
 DECISION_BUY = "BUY"
@@ -153,16 +153,6 @@ def _timeframe_bias(
 def calculate_timeframe_alignment(
     timeframes: Mapping[str, Any],
 ) -> float:
-    """
-    Calcula la alineación entre 1D, 4H, 1H y 15M.
-
-    1D y 4H tienen mayor peso porque representan
-    tendencia y estructura.
-
-    1H y 15M tienen menor peso porque son más sensibles
-    al ruido de corto plazo.
-    """
-
     if not isinstance(timeframes, Mapping):
         raise TypeError(
             "timeframes debe ser un Mapping."
@@ -189,10 +179,12 @@ def calculate_timeframe_alignment(
             available.append(
                 (weight, 1.0)
             )
+
         elif bias == "BEARISH":
             available.append(
                 (weight, -1.0)
             )
+
         else:
             available.append(
                 (weight, 0.0)
@@ -224,13 +216,6 @@ def calculate_timeframe_alignment(
 def calculate_trend_quality(
     timeframes: Mapping[str, Any],
 ) -> float:
-    """
-    Mide la consistencia direccional de las temporalidades.
-
-    No mide simplemente si el mercado está alcista.
-    Mide cuánto coinciden las temporalidades.
-    """
-
     if not isinstance(timeframes, Mapping):
         raise TypeError(
             "timeframes debe ser un Mapping."
@@ -279,9 +264,7 @@ def calculate_trend_quality(
         / len(biases)
     ) * 100.0
 
-    return _clamp(
-        consistency
-    )
+    return _clamp(consistency)
 
 
 def determine_market_regime(
@@ -290,21 +273,6 @@ def determine_market_regime(
     trend_quality: float,
     volatility_score: float = 50.0,
 ) -> str:
-    """
-    Clasifica el entorno general.
-
-    Prioridad de seguridad:
-
-    1. Volatilidad extrema.
-    2. Riesgo de mercado.
-    3. Condiciones favorables.
-    4. Neutralidad.
-
-    Importante:
-    una volatilidad extremadamente adversa puede activar
-    HIGH_RISK aunque el score técnico sea elevado.
-    """
-
     score = _clamp(
         technical_score
     )
@@ -321,31 +289,14 @@ def determine_market_regime(
         volatility_score
     )
 
-    # --------------------------------------------------------
-    # BLOQUEO DE SEGURIDAD POR VOLATILIDAD EXTREMA
-    # --------------------------------------------------------
-
-    if volatility <= 15.0:
-        return REGIME_HIGH_RISK
-
-    # Volatilidad muy elevada.
-    # Se considera HIGH_RISK incluso con buen score técnico.
     if volatility <= 25.0:
         return REGIME_HIGH_RISK
-
-    # --------------------------------------------------------
-    # RISK OFF
-    # --------------------------------------------------------
 
     if (
         score <= 35.0
         and trend <= 50.0
     ):
         return REGIME_RISK_OFF
-
-    # --------------------------------------------------------
-    # RISK ON
-    # --------------------------------------------------------
 
     if (
         score >= 65.0
@@ -361,13 +312,6 @@ def calculate_confirmation_score(
     strategy: Mapping[str, Any],
     risk: Mapping[str, Any] | None = None,
 ) -> float:
-    """
-    Evalúa cuánto respaldo existe para ejecutar
-    una operación.
-
-    La puntuación no crea una señal por sí sola.
-    """
-
     if not isinstance(
         strategy,
         Mapping,
@@ -385,172 +329,4 @@ def calculate_confirmation_score(
         strategy.get("decision")
     )
 
-    confirmations = strategy.get(
-        "confirmations",
-        (),
-    )
-
-    if not isinstance(
-        confirmations,
-        (list, tuple, set),
-    ):
-        confirmations = ()
-
-    blockers = strategy.get(
-        "blockers",
-        (),
-    )
-
-    if not isinstance(
-        blockers,
-        (list, tuple, set),
-    ):
-        blockers = ()
-
-    score = 50.0
-
-    if decision == DECISION_BUY:
-        score += 30.0
-
-    elif decision == DECISION_ACCUMULATE:
-        score += 20.0
-
-    elif decision == DECISION_SPECULATIVE:
-        score += 5.0
-
-    elif decision == DECISION_WAIT:
-        score -= 15.0
-
-    elif decision == DECISION_AVOID:
-        score -= 40.0
-
-    score += min(
-        len(confirmations) * 5.0,
-        15.0,
-    )
-
-    score -= min(
-        len(blockers) * 10.0,
-        30.0,
-    )
-
-    if risk_data.get("valid") is True:
-        score += 10.0
-
-    if risk_data.get("valid") is False:
-        score -= 20.0
-
-    return _clamp(score)
-
-
-def determine_risk_level(
-    risk: Mapping[str, Any] | None,
-    strategy: Mapping[str, Any],
-    market_regime: str,
-) -> str:
-    """
-    Clasifica riesgo operativo.
-
-    EXTREME:
-        riesgo estructural o de mercado muy elevado.
-
-    HIGH:
-        operación posible pero con condiciones adversas.
-
-    MEDIUM:
-        riesgo controlable.
-
-    LOW:
-        condiciones relativamente favorables.
-    """
-
-    risk_data = _mapping(
-        risk,
-        "risk",
-    )
-
-    strategy_data = _mapping(
-        strategy,
-        "strategy",
-    )
-
-    decision = _text(
-        strategy_data.get("decision")
-    )
-
-    regime = _text(
-        market_regime
-    )
-
-    warnings = risk_data.get(
-        "warnings",
-        (),
-    )
-
-    if not isinstance(
-        warnings,
-        (list, tuple, set),
-    ):
-        warnings = ()
-
-    if regime == REGIME_HIGH_RISK:
-        return "EXTREME"
-
-    if decision == DECISION_AVOID:
-        return "EXTREME"
-
-    if decision == DECISION_SPECULATIVE:
-        return "HIGH"
-
-    if regime == REGIME_RISK_OFF:
-        return "HIGH"
-
-    if len(warnings) >= 3:
-        return "HIGH"
-
-    if decision == DECISION_WAIT:
-        return "MEDIUM"
-
-    if len(warnings) >= 1:
-        return "MEDIUM"
-
-    return "LOW"
-
-
-def _risk_reward_ok(
-    risk: Mapping[str, Any] | None,
-) -> bool:
-    if not isinstance(risk, Mapping):
-        return False
-
-    rr = _number(
-        risk.get(
-            "risk_reward_tp2"
-        )
-    )
-
-    if rr is None:
-        return False
-
-    return rr >= 1.5
-
-
-def build_decision(
-    scoring: Mapping[str, Any],
-    strategy: Mapping[str, Any],
-    risk: Mapping[str, Any] | None = None,
-    timeframes: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    """
-    Motor central del Radar.
-
-    Orden de prioridad:
-
-    1. Seguridad.
-    2. Régimen.
-    3. Alineación temporal.
-    4. Confirmación.
-    5. Riesgo/recompensa.
-    6. Decisión final.
-
-    Una condición pelig
+    confirmations
