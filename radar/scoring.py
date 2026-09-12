@@ -152,4 +152,4 @@ def score_trend(
         "NEUTRAL": 50.0,
         "NEUTRAL_BEARISH": 40.0,
 
-        "BEARISH
+        "BEARISH"
