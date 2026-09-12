@@ -53,12 +53,10 @@ def _number(
     except (TypeError, ValueError):
         return default
 
-    if number != number:
-        return default
-
-    if number in (
-        float("inf"),
-        float("-inf"),
+    if not (
+        number == number
+        and number != float("inf")
+        and number != float("-inf")
     ):
         return default
 
@@ -295,7 +293,16 @@ def determine_market_regime(
     """
     Clasifica el entorno general.
 
-    No confunde score técnico con régimen de mercado.
+    Prioridad de seguridad:
+
+    1. Volatilidad extrema.
+    2. Riesgo de mercado.
+    3. Condiciones favorables.
+    4. Neutralidad.
+
+    Importante:
+    una volatilidad extremadamente adversa puede activar
+    HIGH_RISK aunque el score técnico sea elevado.
     """
 
     score = _clamp(
@@ -314,17 +321,31 @@ def determine_market_regime(
         volatility_score
     )
 
-    if (
-        volatility <= 25.0
-        and confidence_value < 60.0
-    ):
+    # --------------------------------------------------------
+    # BLOQUEO DE SEGURIDAD POR VOLATILIDAD EXTREMA
+    # --------------------------------------------------------
+
+    if volatility <= 15.0:
         return REGIME_HIGH_RISK
+
+    # Volatilidad muy elevada.
+    # Se considera HIGH_RISK incluso con buen score técnico.
+    if volatility <= 25.0:
+        return REGIME_HIGH_RISK
+
+    # --------------------------------------------------------
+    # RISK OFF
+    # --------------------------------------------------------
 
     if (
         score <= 35.0
         and trend <= 50.0
     ):
         return REGIME_RISK_OFF
+
+    # --------------------------------------------------------
+    # RISK ON
+    # --------------------------------------------------------
 
     if (
         score >= 65.0
@@ -532,483 +553,4 @@ def build_decision(
     5. Riesgo/recompensa.
     6. Decisión final.
 
-    Una condición peligrosa siempre puede degradar
-    una señal alcista.
-    """
-
-    if not isinstance(
-        scoring,
-        Mapping,
-    ):
-        raise TypeError(
-            "scoring debe ser un Mapping."
-        )
-
-    if not isinstance(
-        strategy,
-        Mapping,
-    ):
-        raise TypeError(
-            "strategy debe ser un Mapping."
-        )
-
-    risk_data = _mapping(
-        risk,
-        "risk",
-    )
-
-    timeframe_data = _mapping(
-        timeframes,
-        "timeframes",
-    )
-
-    technical_score = _number(
-        scoring.get(
-            "technical_score"
-        ),
-        50.0,
-    )
-
-    confidence = _number(
-        scoring.get(
-            "confidence"
-        ),
-        0.0,
-    )
-
-    volatility_score = _number(
-        scoring.get(
-            "volatility_score"
-        ),
-        50.0,
-    )
-
-    technical_score = _clamp(
-        technical_score
-    )
-
-    confidence = _clamp(
-        confidence
-    )
-
-    volatility_score = _clamp(
-        volatility_score
-    )
-
-    # --------------------------------------------------------
-    # MULTI-TIMEFRAME
-    # --------------------------------------------------------
-
-    timeframe_alignment = (
-        calculate_timeframe_alignment(
-            timeframe_data
-        )
-    )
-
-    trend_quality = (
-        calculate_trend_quality(
-            timeframe_data
-        )
-    )
-
-    # --------------------------------------------------------
-    # RÉGIMEN
-    # --------------------------------------------------------
-
-    market_regime = determine_market_regime(
-        technical_score=technical_score,
-        confidence=confidence,
-        trend_quality=trend_quality,
-        volatility_score=volatility_score,
-    )
-
-    # --------------------------------------------------------
-    # CONFIRMACIÓN
-    # --------------------------------------------------------
-
-    confirmation_score = (
-        calculate_confirmation_score(
-            strategy=strategy,
-            risk=risk_data,
-        )
-    )
-
-    # --------------------------------------------------------
-    # RIESGO
-    # --------------------------------------------------------
-
-    risk_level = determine_risk_level(
-        risk=risk_data,
-        strategy=strategy,
-        market_regime=market_regime,
-    )
-
-    confirmations: list[str] = []
-    blockers: list[str] = []
-    warnings: list[str] = []
-
-    # --------------------------------------------------------
-    # CONFIRMACIONES MULTI-TIMEFRAME
-    # --------------------------------------------------------
-
-    if timeframe_alignment >= 70.0:
-        confirmations.append(
-            "Temporalidades alineadas al alza."
-        )
-
-    elif timeframe_alignment <= 30.0:
-        blockers.append(
-            "Temporalidades alineadas a la baja."
-        )
-
-    else:
-        warnings.append(
-            "Las temporalidades presentan conflicto."
-        )
-
-    if trend_quality >= 75.0:
-        confirmations.append(
-            "Alta consistencia de tendencia."
-        )
-
-    elif trend_quality < 50.0:
-        warnings.append(
-            "Baja consistencia de tendencia."
-        )
-
-    # --------------------------------------------------------
-    # ESTRUCTURA DE STRATEGY
-    # --------------------------------------------------------
-
-    strategy_confirmations = strategy.get(
-        "confirmations",
-        (),
-    )
-
-    if isinstance(
-        strategy_confirmations,
-        (list, tuple, set),
-    ):
-        confirmations.extend(
-            str(item)
-            for item in strategy_confirmations
-        )
-
-    strategy_blockers = strategy.get(
-        "blockers",
-        (),
-    )
-
-    if isinstance(
-        strategy_blockers,
-        (list, tuple, set),
-    ):
-        blockers.extend(
-            str(item)
-            for item in strategy_blockers
-        )
-
-    # --------------------------------------------------------
-    # VELA ABIERTA
-    # --------------------------------------------------------
-
-    open_candle = False
-
-    for data in timeframe_data.values():
-
-        if not isinstance(data, Mapping):
-            continue
-
-        if not _closed(data):
-            open_candle = True
-            break
-
-    if open_candle:
-        warnings.append(
-            "Existe al menos una vela abierta."
-        )
-
-    # --------------------------------------------------------
-    # R:R
-    # --------------------------------------------------------
-
-    if (
-        strategy.get("decision")
-        in {
-            DECISION_BUY,
-            DECISION_ACCUMULATE,
-        }
-    ):
-        if _risk_reward_ok(risk_data):
-            confirmations.append(
-                "R:R de TP2 cumple el mínimo 1.5:1."
-            )
-        else:
-            blockers.append(
-                "R:R insuficiente para la operación."
-            )
-
-    # --------------------------------------------------------
-    # DECISIÓN BASE
-    # --------------------------------------------------------
-
-    strategy_decision = _text(
-        strategy.get("decision")
-    )
-
-    final_decision = strategy_decision
-
-    reason = (
-        "La decisión se mantiene según Strategy."
-    )
-
-    # ========================================================
-    # REGLAS DE SEGURIDAD
-    # ========================================================
-
-    if strategy_decision == DECISION_AVOID:
-        final_decision = DECISION_AVOID
-
-        reason = (
-            "Strategy bloquea la operación "
-            "por condiciones adversas."
-        )
-
-    elif market_regime == REGIME_HIGH_RISK:
-        final_decision = DECISION_AVOID
-
-        reason = (
-            "El régimen de mercado presenta "
-            "riesgo extremo."
-        )
-
-    elif strategy_decision == DECISION_BUY:
-
-        if risk_level == "EXTREME":
-            final_decision = DECISION_AVOID
-
-            reason = (
-                "La señal alcista queda anulada "
-                "por riesgo extremo."
-            )
-
-        elif timeframe_alignment < 55.0:
-            final_decision = DECISION_WAIT
-
-            reason = (
-                "La señal alcista carece de suficiente "
-                "alineación multi-temporal."
-            )
-
-        elif not _risk_reward_ok(risk_data):
-            final_decision = DECISION_WAIT
-
-            reason = (
-                "La señal alcista no presenta "
-                "una relación riesgo/beneficio suficiente."
-            )
-
-        elif open_candle:
-            final_decision = DECISION_WAIT
-
-            reason = (
-                "La señal depende de una vela todavía abierta."
-            )
-
-        else:
-            final_decision = DECISION_BUY
-
-            reason = (
-                "Score, estrategia, temporalidades "
-                "y gestión de riesgo son compatibles."
-            )
-
-    elif strategy_decision == DECISION_ACCUMULATE:
-
-        if risk_level in {
-            "EXTREME",
-            "HIGH",
-        }:
-            final_decision = DECISION_WAIT
-
-            reason = (
-                "La acumulación no está justificada "
-                "por el nivel actual de riesgo."
-            )
-
-        elif timeframe_alignment < 50.0:
-            final_decision = DECISION_WAIT
-
-            reason = (
-                "La estructura multi-temporal "
-                "todavía no acompaña."
-            )
-
-    elif strategy_decision == DECISION_SPECULATIVE:
-
-        if risk_level == "EXTREME":
-            final_decision = DECISION_AVOID
-
-            reason = (
-                "La operación especulativa queda "
-                "bloqueada por riesgo extremo."
-            )
-
-        else:
-            final_decision = DECISION_SPECULATIVE
-
-            reason = (
-                "Existe una oportunidad especulativa, "
-                "pero requiere riesgo controlado."
-            )
-
-    elif strategy_decision == DECISION_WAIT:
-        final_decision = DECISION_WAIT
-
-        reason = (
-            "El Radar espera confirmación antes "
-            "de habilitar una operación."
-        )
-
-    else:
-        final_decision = DECISION_WAIT
-
-        reason = (
-            "La decisión recibida no es reconocida "
-            "por el motor."
-        )
-
-    # ========================================================
-    # BIAS FINAL
-    # ========================================================
-
-    if final_decision in {
-        DECISION_BUY,
-        DECISION_ACCUMULATE,
-        DECISION_SPECULATIVE,
-    }:
-        final_bias = "BULLISH"
-
-    elif final_decision == DECISION_AVOID:
-        final_bias = "BEARISH"
-
-    else:
-        score_bias = _text(
-            scoring.get("bias")
-        )
-
-        if _bullish(score_bias):
-            final_bias = "BULLISH"
-
-        elif _bearish(score_bias):
-            final_bias = "BEARISH"
-
-        else:
-            final_bias = "NEUTRAL"
-
-    # ========================================================
-    # CONFIANZA FINAL
-    # ========================================================
-
-    final_confidence = (
-        confidence * 0.45
-        + trend_quality * 0.20
-        + confirmation_score * 0.20
-        + (
-            timeframe_alignment
-            if final_bias == "BULLISH"
-            else 100.0 - timeframe_alignment
-        ) * 0.15
-    )
-
-    if open_candle:
-        final_confidence -= 5.0
-
-    if risk_level == "HIGH":
-        final_confidence -= 8.0
-
-    if risk_level == "EXTREME":
-        final_confidence -= 20.0
-
-    final_confidence = _clamp(
-        final_confidence
-    )
-
-    # ========================================================
-    # ELIMINAR DUPLICADOS
-    # ========================================================
-
-    confirmations = list(
-        dict.fromkeys(
-            confirmations
-        )
-    )
-
-    blockers = list(
-        dict.fromkeys(
-            blockers
-        )
-    )
-
-    warnings = list(
-        dict.fromkeys(
-            warnings
-        )
-    )
-
-    # ========================================================
-    # RESULTADO
-    # ========================================================
-
-    return DecisionResult(
-        decision=final_decision,
-        bias=final_bias,
-        confidence=round(
-            final_confidence,
-            4,
-        ),
-        market_regime=market_regime,
-        technical_score=round(
-            technical_score,
-            4,
-        ),
-        trend_quality=round(
-            trend_quality,
-            4,
-        ),
-        timeframe_alignment=round(
-            timeframe_alignment,
-            4,
-        ),
-        confirmation_score=round(
-            confirmation_score,
-            4,
-        ),
-        risk_level=risk_level,
-        reason=reason,
-        confirmations=tuple(
-            confirmations
-        ),
-        blockers=tuple(
-            blockers
-        ),
-        warnings=tuple(
-            warnings
-        ),
-    ).to_dict()
-
-
-def decision_engine(
-    scoring: Mapping[str, Any],
-    strategy: Mapping[str, Any],
-    risk: Mapping[str, Any] | None = None,
-    timeframes: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Alias público del motor de decisión."""
-
-    return build_decision(
-        scoring=scoring,
-        strategy=strategy,
-        risk=risk,
-        timeframes=timeframes,
-    )
+    Una condición pelig
