@@ -661,34 +661,40 @@ def relative_volume(
     period: int = 20,
 ) -> list[float | None]:
     """
-    Volumen actual dividido por el volumen promedio
+    Volumen relativo.
+
+    Compara el volumen de cada vela con el volumen promedio
     de las N velas anteriores.
 
-    > 1.0 = volumen superior al promedio.
-    < 1.0 = volumen inferior al promedio.
+    Fórmula:
 
-    El volumen actual NO forma parte de su propia referencia.
+        volumen_actual / volumen_promedio_anterior
+
+    Interpretación:
+
+        > 1.0  = volumen superior al promedio
+        = 1.0  = volumen similar al promedio
+        < 1.0  = volumen inferior al promedio
+
+    Si no existen suficientes velas para calcular el indicador,
+    se devuelve None en esas posiciones.
+
+    IMPORTANTE:
+    El volumen actual NO se utiliza para construir su propia
+    referencia promedio.
     """
 
-    period = _validate_period(
-        period,
-        "period",
-    )
+    period = _validate_period(period, "period")
 
-    data = _validate_candles(
-        candles,
-        minimum=period + 1,
-    )
+    data = _validate_candles(candles)
 
-    result: list[float | None] = [
-        None
-    ] * len(data)
+    result: list[float | None] = [None] * len(data)
 
-    for index in range(
-        period,
-        len(data),
-    ):
+    # No hay suficientes datos para calcular ninguna ventana.
+    if len(data) <= period:
+        return result
 
+    for index in range(period, len(data)):
         previous_volumes = [
             float(candle.volume)
             for candle in data[
@@ -697,23 +703,18 @@ def relative_volume(
         ]
 
         average_volume = (
-            sum(previous_volumes)
-            / period
+            sum(previous_volumes) / period
         )
 
         current_volume = float(
             data[index].volume
         )
 
-        if average_volume <= 0:
-
+        if average_volume <= 0.0:
             result[index] = None
-
         else:
-
             result[index] = (
-                current_volume
-                / average_volume
+                current_volume / average_volume
             )
 
     return result
