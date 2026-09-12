@@ -820,5 +820,6 @@ def build_decision(
             final_decision = DECISION_WAIT
 
             reason = (
-                "La señal alcista carece de suficiente "
-                
+            "La señal alcista carece de suficiente "
+            "alineación multi-temporal."
+        )
