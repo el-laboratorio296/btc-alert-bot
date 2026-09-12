@@ -8,12 +8,20 @@ class StrategyError(Exception):
     """Error base del motor de estrategia."""
 
 
+# ============================================================
+# DECISIONES
+# ============================================================
+
 DECISION_BUY = "BUY"
 DECISION_ACCUMULATE = "ACCUMULATE"
 DECISION_WAIT = "WAIT_CONFIRMATION"
 DECISION_SPECULATIVE = "SPECULATIVE"
 DECISION_AVOID = "AVOID"
 
+
+# ============================================================
+# RESULTADO
+# ============================================================
 
 @dataclass(frozen=True)
 class StrategyResult:
@@ -28,9 +36,14 @@ class StrategyResult:
         return asdict(self)
 
 
+# ============================================================
+# UTILIDADES
+# ============================================================
+
 def _normalize(value: Any) -> str:
     if value is None:
         return ""
+
     return str(value).strip().upper()
 
 
@@ -71,8 +84,13 @@ def _get(
     for name in names:
         if name in data:
             return data[name]
+
     return default
 
+
+# ============================================================
+# DIRECCIÓN
+# ============================================================
 
 def _is_bullish(value: Any) -> bool:
     return _normalize(value) in {
@@ -108,6 +126,10 @@ def _is_neutral(value: Any) -> bool:
         "LATERAL",
     }
 
+
+# ============================================================
+# ESTRUCTURA
+# ============================================================
 
 def _confirmed_breakout(
     structure: Mapping[str, Any],
@@ -161,6 +183,10 @@ def _potential_breakdown(
     )
 
 
+# ============================================================
+# CALIDAD DE DATOS
+# ============================================================
+
 def _data_quality_ok(
     scoring: Mapping[str, Any],
 ) -> bool:
@@ -188,11 +214,20 @@ def _data_quality_ok(
     )
 
 
+# ============================================================
+# CONFLICTO BAJISTA
+# ============================================================
+
 def _has_strong_bearish_conflict(
     scoring: Mapping[str, Any],
     structure: Mapping[str, Any],
 ) -> bool:
-    trend = _get(scoring, "bias", "trend")
+    scoring_bias = _get(
+        scoring,
+        "bias",
+        "trend",
+    )
+
     structure_trend = _get(
         structure,
         "trend",
@@ -200,11 +235,15 @@ def _has_strong_bearish_conflict(
     )
 
     return (
-        _is_bearish(trend)
+        _is_bearish(scoring_bias)
         or _is_bearish(structure_trend)
         or _confirmed_breakdown(structure)
     )
 
+
+# ============================================================
+# CONFIRMACIÓN ALCISTA
+# ============================================================
 
 def _has_strong_bullish_confirmation(
     scoring: Mapping[str, Any],
@@ -228,7 +267,12 @@ def _has_strong_bullish_confirmation(
         0.0,
     )
 
-    trend = _get(scoring, "bias", "trend")
+    scoring_bias = _get(
+        scoring,
+        "bias",
+        "trend",
+    )
+
     structure_trend = _get(
         structure,
         "trend",
@@ -239,12 +283,16 @@ def _has_strong_bullish_confirmation(
         score >= 65.0
         and confidence >= 70.0
         and (
-            _is_bullish(trend)
+            _is_bullish(scoring_bias)
             or _is_bullish(structure_trend)
             or _confirmed_breakout(structure)
         )
     )
 
+
+# ============================================================
+# MOTOR PRINCIPAL
+# ============================================================
 
 def evaluate_strategy(
     scoring: Mapping[str, Any],
@@ -255,9 +303,18 @@ def evaluate_strategy(
     Convierte scoring + estructura + indicadores
     en una decisión operativa.
 
-    Regla principal:
-    sobreventa por sí sola NO genera compra.
+    Principios:
+
+    - Una ruptura potencial NO es una ruptura confirmada.
+    - RSI sobrevendido NO significa compra automática.
+    - Un breakdown confirmado bloquea entradas largas.
+    - Datos insuficientes bloquean entradas.
+    - Los conflictos estructurales tienen prioridad.
     """
+
+    # --------------------------------------------------------
+    # VALIDACIÓN
+    # --------------------------------------------------------
 
     if not isinstance(scoring, Mapping):
         raise TypeError(
@@ -279,6 +336,10 @@ def evaluate_strategy(
         raise TypeError(
             "indicators debe ser un Mapping."
         )
+
+    # --------------------------------------------------------
+    # DATOS PRINCIPALES
+    # --------------------------------------------------------
 
     technical_score = _number(
         _get(
@@ -322,21 +383,16 @@ def evaluate_strategy(
         )
     )
 
+    # --------------------------------------------------------
+    # LISTAS EXPLICATIVAS
+    # --------------------------------------------------------
+
     blockers: list[str] = []
     confirmations: list[str] = []
 
-    # ---------------------------------------------------------
-    # 1. PROTECCIÓN DE DATOS
-    # ---------------------------------------------------------
-
-    if not _data_quality_ok(scoring):
-        blockers.append(
-            "Datos o confianza insuficientes"
-        )
-
-    # ---------------------------------------------------------
-    # 2. ESTRUCTURA
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
+    # ESTRUCTURA
+    # --------------------------------------------------------
 
     confirmed_breakout = _confirmed_breakout(
         structure
@@ -354,43 +410,74 @@ def evaluate_strategy(
         structure
     )
 
+    # --------------------------------------------------------
+    # CONFIRMACIONES
+    # --------------------------------------------------------
+
     if confirmed_breakout:
         confirmations.append(
             "Ruptura estructural confirmada"
         )
 
-    if potential_breakout:
+    if (
+        potential_breakout
+        and not confirmed_breakout
+    ):
         confirmations.append(
             "Ruptura potencial"
         )
+
+    # --------------------------------------------------------
+    # BLOQUEADORES
+    # --------------------------------------------------------
 
     if confirmed_breakdown:
         blockers.append(
             "Ruptura bajista confirmada"
         )
 
-    if potential_breakdown:
+    if (
+        potential_breakdown
+        and not confirmed_breakdown
+    ):
         blockers.append(
             "Ruptura bajista potencial"
         )
 
-    # ---------------------------------------------------------
-    # 3. CONFLICTO DE TENDENCIA
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
+    # CALIDAD
+    # --------------------------------------------------------
+
+    data_quality_ok = _data_quality_ok(
+        scoring
+    )
+
+    if not data_quality_ok:
+        blockers.append(
+            "Datos o confianza insuficientes"
+        )
+
+    # --------------------------------------------------------
+    # CONFLICTO BAJISTA
+    # --------------------------------------------------------
 
     bearish_conflict = _has_strong_bearish_conflict(
         scoring,
         structure,
     )
 
+    # --------------------------------------------------------
+    # CONFIRMACIÓN ALCISTA
+    # --------------------------------------------------------
+
     bullish_confirmation = _has_strong_bullish_confirmation(
         scoring,
         structure,
     )
 
-    # ---------------------------------------------------------
-    # 4. SOBREVENTA SIN CONFIRMACIÓN
-    # ---------------------------------------------------------
+    # ========================================================
+    # SOBREVENTA
+    # ========================================================
 
     oversold_without_confirmation = (
         rsi is not None
@@ -404,9 +491,9 @@ def evaluate_strategy(
             "RSI sobrevendido sin confirmación alcista"
         )
 
-    # ---------------------------------------------------------
-    # 5. MOMENTUM
-    # ---------------------------------------------------------
+    # ========================================================
+    # MOMENTUM
+    # ========================================================
 
     weak_momentum = (
         momentum is not None
@@ -428,82 +515,131 @@ def evaluate_strategy(
             "Momentum débil"
         )
 
-    # ---------------------------------------------------------
-    # 6. DECISIÓN
-    # ---------------------------------------------------------
+    # ========================================================
+    # DECISIÓN
+    # ========================================================
 
     decision = DECISION_WAIT
-    reason = "No existe confirmación suficiente."
 
-    # Riesgo estructural máximo.
+    reason = (
+        "No existe confirmación suficiente."
+    )
+
+    # --------------------------------------------------------
+    # PRIORIDAD 1
+    # BREAKDOWN CONFIRMADO
+    # --------------------------------------------------------
+
     if confirmed_breakdown:
         decision = DECISION_AVOID
+
         reason = (
             "Estructura bajista confirmada; "
             "no se recomienda buscar entradas largas."
         )
 
-    # Datos insuficientes.
-    elif not _data_quality_ok(scoring):
+    # --------------------------------------------------------
+    # PRIORIDAD 2
+    # CALIDAD DE DATOS
+    # --------------------------------------------------------
+
+    elif not data_quality_ok:
         decision = DECISION_WAIT
+
         reason = (
             "La calidad de los datos o la confianza "
             "no permite una decisión operativa."
         )
 
-    # Sobreventa sin reversión.
+    # --------------------------------------------------------
+    # PRIORIDAD 3
+    # BREAKOUT POTENCIAL
+    #
+    # CRÍTICO:
+    #
+    # Aunque technical_score >= 65
+    # y confidence >= 70,
+    # NO se permite BUY mientras el breakout
+    # siga siendo solamente potencial.
+    # --------------------------------------------------------
+
+    elif (
+        potential_breakout
+        and not confirmed_breakout
+    ):
+        decision = DECISION_WAIT
+
+        reason = (
+            "Existe una ruptura potencial, pero "
+            "todavía no está confirmada. "
+            "Esperar cierre y confirmación."
+        )
+
+    # --------------------------------------------------------
+    # PRIORIDAD 4
+    # SOBREVENTA SIN REVERSIÓN
+    # --------------------------------------------------------
+
     elif oversold_without_confirmation:
         decision = DECISION_WAIT
+
         reason = (
             "El mercado está sobrevendido, pero "
             "no existe confirmación de reversión."
         )
 
-    # Conflicto bajista fuerte.
+    # --------------------------------------------------------
+    # PRIORIDAD 5
+    # CONFLICTO BAJISTA
+    # --------------------------------------------------------
+
     elif (
         bearish_conflict
         and not confirmed_breakout
     ):
         decision = DECISION_AVOID
+
         reason = (
             "Existe conflicto bajista con la "
             "estructura o tendencia."
         )
 
-    # Compra fuerte.
+    # --------------------------------------------------------
+    # PRIORIDAD 6
+    # BUY CONFIRMADO
+    # --------------------------------------------------------
+
     elif bullish_confirmation:
         decision = DECISION_BUY
+
         reason = (
             "Score, confianza y estructura "
             "presentan confirmación alcista."
         )
 
-    # Ruptura confirmada pero todavía sin score suficiente.
+    # --------------------------------------------------------
+    # PRIORIDAD 7
+    # BREAKOUT CONFIRMADO MODERADO
+    # --------------------------------------------------------
+
     elif (
         confirmed_breakout
         and technical_score >= 55.0
         and confidence >= 60.0
     ):
         decision = DECISION_ACCUMULATE
+
         reason = (
             "Ruptura confirmada con condiciones "
             "favorables, pero sin suficiente fuerza "
             "para una entrada agresiva."
         )
 
-    # Setup potencial.
-    elif (
-        potential_breakout
-        and technical_score >= 55.0
-        and confidence >= 60.0
-    ):
-        decision = DECISION_WAIT
-        reason = (
-            "Existe una ruptura potencial; "
-            "esperar confirmación."
-        )
+    # --------------------------------------------------------
+    # PRIORIDAD 8
+    # SETUP ESPECULATIVO
+    # --------------------------------------------------------
 
-    # Zona especulativa.
     elif (
         technical_score >= 55.0
         and confidence >= 55.0
@@ -511,22 +647,28 @@ def evaluate_strategy(
         and not bearish_conflict
     ):
         decision = DECISION_SPECULATIVE
+
         reason = (
             "Condiciones favorables, pero todavía "
             "sin confirmación suficiente para una "
             "entrada principal."
         )
 
-    # Score extremadamente débil.
+    # --------------------------------------------------------
+    # PRIORIDAD 9
+    # SCORE MUY DÉBIL
+    # --------------------------------------------------------
+
     elif technical_score <= 35.0:
         decision = DECISION_AVOID
+
         reason = (
             "Score técnico demasiado débil."
         )
 
-    # ---------------------------------------------------------
-    # 7. AJUSTE DE BIAS
-    # ---------------------------------------------------------
+    # ========================================================
+    # BIAS FINAL
+    # ========================================================
 
     if decision in {
         DECISION_BUY,
@@ -534,19 +676,23 @@ def evaluate_strategy(
         DECISION_SPECULATIVE,
     }:
         result_bias = "BULLISH"
+
     elif decision == DECISION_AVOID:
         result_bias = "BEARISH"
+
     else:
         if _is_bullish(bias):
             result_bias = "BULLISH"
+
         elif _is_bearish(bias):
             result_bias = "BEARISH"
+
         else:
             result_bias = "NEUTRAL"
 
-    # ---------------------------------------------------------
-    # 8. CONFIANZA FINAL
-    # ---------------------------------------------------------
+    # ========================================================
+    # CONFIANZA FINAL
+    # ========================================================
 
     final_confidence = confidence
 
@@ -562,9 +708,19 @@ def evaluate_strategy(
     if weak_momentum:
         final_confidence -= 5.0
 
+    if (
+        potential_breakout
+        and not confirmed_breakout
+    ):
+        final_confidence -= 5.0
+
     final_confidence = _clamp(
         final_confidence
     )
+
+    # ========================================================
+    # RESULTADO
+    # ========================================================
 
     return StrategyResult(
         decision=decision,
@@ -579,6 +735,10 @@ def evaluate_strategy(
     ).to_dict()
 
 
+# ============================================================
+# ALIAS PÚBLICO
+# ============================================================
+
 def strategy_score(
     scoring: Mapping[str, Any],
     structure: Mapping[str, Any] | None = None,
@@ -588,6 +748,7 @@ def strategy_score(
     Alias público para mantener una API sencilla
     y facilitar futuras integraciones.
     """
+
     return evaluate_strategy(
         scoring=scoring,
         structure=structure,
