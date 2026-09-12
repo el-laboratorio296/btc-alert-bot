@@ -53,6 +53,7 @@ class FakeSession:
                 "timeout": timeout,
             }
         )
+
         return self.response
 
 
@@ -67,8 +68,19 @@ def make_kline(
     low_price: float = 95.0,
     close_price: float = 105.0,
     volume: float = 1000.0,
-    close_time: int = 1_700_000_899_999,
+    close_time: int | None = None,
 ):
+    """
+    Crea una vela Binance simulada.
+
+    Si close_time no se especifica,
+    se calcula automáticamente a partir
+    del timestamp para evitar inconsistencias.
+    """
+
+    if close_time is None:
+        close_time = timestamp + 899_999
+
     return [
         timestamp,
         str(open_price),
@@ -253,7 +265,7 @@ def test_parse_candle_rejects_invalid_numbers():
 
 
 # ============================================================
-# VALIDACIÓN OHLC
+# VALIDACIÓN OHLCV
 # ============================================================
 
 def test_parse_candle_rejects_negative_prices():
@@ -327,173 +339,4 @@ def test_request_uses_data_api_binance():
     call = session.calls[0]
 
     assert (
-        call["url"]
-        == "https://data-api.binance.vision/api/v3/klines"
-    )
-
-    assert call["params"]["symbol"] == "BTCUSDT"
-    assert call["params"]["interval"] == "15m"
-    assert call["params"]["limit"] == 5
-
-
-# ============================================================
-# GET KLINES
-# ============================================================
-
-def test_get_klines_returns_candles():
-    raw_data = [
-        make_kline(
-            timestamp=1_700_000_000_000,
-            close_price=100,
-        ),
-        make_kline(
-            timestamp=1_700_000_900_000,
-            close_price=105,
-        ),
-        make_kline(
-            timestamp=1_700_001_800_000,
-            close_price=110,
-        ),
-    ]
-
-    response = FakeResponse(
-        status_code=200,
-        payload=raw_data,
-    )
-
-    session = FakeSession(response)
-
-    provider = BinanceProvider(
-        session=session,
-    )
-
-    candles = provider.get_klines(
-        "BTC",
-        "15m",
-        limit=3,
-    )
-
-    assert len(candles) == 3
-
-    assert all(
-        isinstance(candle, Candle)
-        for candle in candles
-    )
-
-    assert candles[0].close == 100
-    assert candles[1].close == 105
-    assert candles[2].close == 110
-
-
-def test_get_klines_normalizes_symbol():
-    raw_data = [
-        make_kline(),
-    ]
-
-    response = FakeResponse(
-        status_code=200,
-        payload=raw_data,
-    )
-
-    session = FakeSession(response)
-
-    provider = BinanceProvider(
-        session=session,
-    )
-
-    provider.get_klines(
-        "btc",
-        "15m",
-        limit=1,
-    )
-
-    call = session.calls[0]
-
-    assert (
-        call["params"]["symbol"]
-        == "BTCUSDT"
-    )
-
-
-# ============================================================
-# MULTI-TIMEFRAME
-# ============================================================
-
-def test_get_multi_timeframe_returns_requested_intervals():
-    raw_data = [
-        make_kline(),
-    ]
-
-    response = FakeResponse(
-        status_code=200,
-        payload=raw_data,
-    )
-
-    session = FakeSession(response)
-
-    provider = BinanceProvider(
-        session=session,
-    )
-
-    result = provider.get_multi_timeframe(
-        "BTC",
-        intervals=("15m", "1h", "4h"),
-        limit=1,
-    )
-
-    assert set(result.keys()) == {
-        "15m",
-        "1h",
-        "4h",
-    }
-
-    assert len(result["15m"]) == 1
-    assert len(result["1h"]) == 1
-    assert len(result["4h"]) == 1
-
-
-# ============================================================
-# ERROR HTTP
-# ============================================================
-
-def test_request_raises_provider_error_on_http_error():
-    response = FakeResponse(
-        status_code=451,
-        payload={
-            "code": -1000,
-            "msg": "Unavailable",
-        },
-    )
-
-    session = FakeSession(response)
-
-    provider = BinanceProvider(
-        session=session,
-        max_retries=1,
-    )
-
-    with pytest.raises(BinanceProviderError):
-        provider._request(
-            provider.KLINES_ENDPOINT,
-            {
-                "symbol": "BTCUSDT",
-                "interval": "15m",
-                "limit": 5,
-            },
-        )
-
-
-# ============================================================
-# CONFIGURACIÓN
-# ============================================================
-
-def test_binance_provider_configuration():
-    provider = BinanceProvider()
-
-    assert (
-        provider.BASE_URL
-        == "https://data-api.binance.vision"
-    )
-
-    assert provider.DEFAULT_TIMEOUT == 20
-    assert provider.MAX_LIMIT == 1000
+        call["
