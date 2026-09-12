@@ -580,3 +580,48 @@ def format_report(
             lines.append(
                 "🟡 Acumulación: "
                 + ", ".join(
+                    accumulation_assets
+                )
+            )
+
+    if waiting_assets:
+        lines.append("")
+        lines.append(
+            "⏳ ESPERANDO CONFIRMACIÓN"
+        )
+        lines.append(
+            ", ".join(waiting_assets)
+        )
+
+    if avoid_assets:
+        lines.append("")
+        lines.append("⛔ EVITAR")
+        lines.append(
+            ", ".join(avoid_assets)
+        )
+
+    lines.append("")
+    lines.append("━━━━━━━━━━━━━━━━")
+    lines.append(
+        "⚠️ Radar informativo. No garantiza resultados."
+    )
+
+    return "\n".join(lines)
+
+
+def build_report(
+    report_type: str,
+    alerts: list[Mapping[str, Any]],
+    generated_at: str | None = None,
+) -> dict[str, Any]:
+
+    payload = build_report_payload(
+        report_type=report_type,
+        alerts=alerts,
+        generated_at=generated_at,
+    )
+
+    return {
+        "payload": payload,
+        "message": format_report(payload),
+    }
