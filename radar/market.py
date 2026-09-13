@@ -1,880 +1,698 @@
 from __future__ import annotations
 
-import time
+from collections.abc import Mapping, Sequence
 from typing import Any
 
-from radar.cache import MarketCache, CacheError
 from radar.models import (
     AssetMarketData,
     Candle,
-    DataQuality,
     MarketTicker,
     TimeframeData,
-)
-from radar.providers.binance import (
-    BinanceProvider,
-    BinanceProviderError,
-)
-from radar.providers.coingecko import (
-    CoinGeckoProvider,
-    CoinGeckoProviderError,
 )
 
 
 class MarketDataError(Exception):
-    """Error general de la capa de datos de mercado."""
+    """Error controlado en la capa de datos de mercado."""
 
 
-class MarketDataManager:
+class MarketService:
     """
-    Capa central de datos del Radar El Laboratorio.
-
-    Responsabilidades:
-
-    1. Obtener datos técnicos desde Binance.
-    2. Obtener información de mercado desde CoinGecko.
-    3. Validar las velas recibidas.
-    4. Separar claramente los proveedores.
-    5. Utilizar caché para reducir llamadas innecesarias.
-    6. Evitar utilizar datos técnicos incompletos.
-    7. Convertir las respuestas de los proveedores a los modelos
-       internos del Radar.
+    Orquestador principal de datos de mercado.
 
     Binance:
-        - Velas OHLCV.
-        - 15m
-        - 1h
-        - 4h
-        - 1d
+        Fuente principal para OHLCV y análisis técnico.
 
     CoinGecko:
-        - Precio.
-        - Market cap.
-        - Volumen 24h.
-        - Variaciones 1h / 24h / 7d.
-        - Datos globales del mercado.
+        Fuente principal para precio, capitalización,
+        volumen y métricas generales de mercado.
+
+    Regla importante:
+        No se mezclan velas de diferentes proveedores.
+        Binance alimenta exclusivamente las temporalidades.
+        CoinGecko alimenta exclusivamente los datos de mercado.
     """
 
-    DEFAULT_TIMEFRAMES = ("15m", "1h", "4h", "1d")
+    DEFAULT_INTERVALS = (
+        "15m",
+        "1h",
+        "4h",
+        "1d",
+    )
 
-    DEFAULT_CANDLE_LIMIT = 500
+    MAX_LIMIT = 1000
 
-    # TTL de caché para cada timeframe.
-    # Debe ser suficientemente corto para no trabajar
-    # con información excesivamente vieja.
-    CACHE_TTL = {
-        "15m": 10 * 60,
-        "1h": 30 * 60,
-        "4h": 2 * 60 * 60,
-        "1d": 6 * 60 * 60,
+    ALLOWED_INTERVALS = {
+        "1m",
+        "3m",
+        "5m",
+        "15m",
+        "30m",
+        "1h",
+        "2h",
+        "4h",
+        "6h",
+        "8h",
+        "12h",
+        "1d",
+        "3d",
+        "1w",
+        "1M",
     }
-
-    # Información de mercado de CoinGecko.
-    MARKET_TTL = 5 * 60
-    GLOBAL_TTL = 10 * 60
 
     def __init__(
         self,
-        binance: BinanceProvider | None = None,
-        coingecko: CoinGeckoProvider | None = None,
-        cache: MarketCache | None = None,
-        clock=time.time,
+        binance: Any,
+        coingecko: Any,
     ) -> None:
-        self.binance = (
-            binance
-            if binance is not None
-            else BinanceProvider()
-        )
+        if binance is None:
+            raise TypeError(
+                "binance no puede ser None."
+            )
 
-        self.coingecko = (
-            coingecko
-            if coingecko is not None
-            else CoinGeckoProvider()
-        )
+        if coingecko is None:
+            raise TypeError(
+                "coingecko no puede ser None."
+            )
 
-        self.cache = (
-            cache
-            if cache is not None
-            else MarketCache()
-        )
+        self.binance = binance
+        self.coingecko = coingecko
 
-        self.clock = clock
-
-    # ============================================================
-    # UTILIDADES
-    # ============================================================
+    # =========================================================
+    # VALIDACIÓN
+    # =========================================================
 
     @staticmethod
     def _normalize_symbol(symbol: str) -> str:
-        if not symbol or not symbol.strip():
-            raise ValueError("El símbolo no puede estar vacío.")
-
-        return symbol.strip().upper().replace(
-            "USDT",
-            "",
-        )
-
-    @staticmethod
-    def _cache_key(
-        symbol: str,
-        timeframe: str,
-    ) -> str:
-        normalized = MarketDataManager._normalize_symbol(symbol)
-
-        return (
-            f"binance:"
-            f"{normalized}:"
-            f"{timeframe}"
-        )
-
-    @staticmethod
-    def _candle_to_dict(candle: Candle) -> dict[str, Any]:
-        return {
-            "timestamp": candle.timestamp,
-            "open": candle.open,
-            "high": candle.high,
-            "low": candle.low,
-            "close": candle.close,
-            "volume": candle.volume,
-            "is_closed": candle.is_closed,
-        }
-
-    @staticmethod
-    def _candle_from_dict(data: dict[str, Any]) -> Candle:
-        return Candle(
-            timestamp=int(data["timestamp"]),
-            open=float(data["open"]),
-            high=float(data["high"]),
-            low=float(data["low"]),
-            close=float(data["close"]),
-            volume=float(data["volume"]),
-            is_closed=bool(
-                data.get("is_closed", True)
-            ),
-        )
-
-    # ============================================================
-    # VALIDACIÓN DE VELAS
-    # ============================================================
-
-    @staticmethod
-    def _validate_candles(
-        candles: list[Candle],
-        timeframe: str,
-    ) -> tuple[bool, str]:
-        """
-        Valida que las velas sean utilizables.
-
-        No intenta decidir si el mercado está alcista o bajista.
-        Solo determina si los datos son técnicamente razonables.
-        """
-
-        if not candles:
-            return False, "No existen velas."
-
-        if len(candles) < 50:
-            return (
-                False,
-                f"Insuficientes velas: {len(candles)}.",
-            )
-
-        previous_timestamp: int | None = None
-
-        for candle in candles:
-
-            if candle.timestamp <= 0:
-                return False, "Timestamp inválido."
-
-            if candle.open <= 0:
-                return False, "Precio open inválido."
-
-            if candle.high <= 0:
-                return False, "Precio high inválido."
-
-            if candle.low <= 0:
-                return False, "Precio low inválido."
-
-            if candle.close <= 0:
-                return False, "Precio close inválido."
-
-            if candle.volume < 0:
-                return False, "Volumen inválido."
-
-            if candle.high < candle.low:
-                return False, "High menor que low."
-
-            if candle.high < candle.open:
-                return False, "High menor que open."
-
-            if candle.high < candle.close:
-                return False, "High menor que close."
-
-            if candle.low > candle.open:
-                return False, "Low mayor que open."
-
-            if candle.low > candle.close:
-                return False, "Low mayor que close."
-
-            if (
-                previous_timestamp is not None
-                and candle.timestamp <= previous_timestamp
-            ):
-                return (
-                    False,
-                    "Las velas no están ordenadas.",
-                )
-
-            previous_timestamp = candle.timestamp
-
-        return True, "Datos válidos."
-
-    # ============================================================
-    # BINANCE
-    # ============================================================
-
-    def _load_binance_timeframe(
-        self,
-        symbol: str,
-        timeframe: str,
-        limit: int,
-    ) -> TimeframeData:
-        """
-        Obtiene un timeframe desde Binance.
-
-        Primero intenta utilizar caché fresco.
-        Si no existe, consulta Binance.
-
-        Nunca convierte datos de CoinGecko en velas técnicas.
-        """
-
-        if timeframe not in self.DEFAULT_TIMEFRAMES:
+        if not isinstance(symbol, str):
             raise ValueError(
-                f"Timeframe no permitido: {timeframe}"
+                "symbol debe ser una cadena."
             )
 
-        cache_key = self._cache_key(
-            symbol,
-            timeframe,
+        cleaned = symbol.strip().upper()
+
+        if not cleaned:
+            raise ValueError(
+                "symbol no puede estar vacío."
+            )
+
+        if cleaned.endswith("USDT"):
+            return cleaned
+
+        return f"{cleaned}USDT"
+
+    @staticmethod
+    def _base_symbol(symbol: str) -> str:
+        normalized = MarketService._normalize_symbol(
+            symbol
         )
 
-        ttl = self.CACHE_TTL[timeframe]
+        if normalized.endswith("USDT"):
+            return normalized[:-4]
 
-        # --------------------------------------------------------
-        # 1. Intentar caché
-        # --------------------------------------------------------
+        return normalized
 
-        cached = self.cache.get(
-            key=cache_key,
-            max_age_seconds=ttl,
-        )
+    @classmethod
+    def _validate_intervals(
+        cls,
+        intervals: Sequence[str],
+    ) -> tuple[str, ...]:
+        if intervals is None:
+            raise ValueError(
+                "intervals no puede ser None."
+            )
 
-        if cached is not None:
-
-            try:
-                candles_data = cached.get(
-                    "candles",
-                    [],
-                )
-
-                candles = [
-                    self._candle_from_dict(item)
-                    for item in candles_data
-                    if isinstance(item, dict)
-                ]
-
-                valid, message = self._validate_candles(
-                    candles,
-                    timeframe,
-                )
-
-                if valid:
-
-                    now = float(self.clock())
-
-                    latest_timestamp = candles[-1].timestamp
-
-                    quality = DataQuality(
-                        source="binance-cache",
-                        fetched_at=float(
-                            cached.get(
-                                "fetched_at",
-                                now,
-                            )
-                        ),
-                        latest_candle_timestamp=latest_timestamp,
-                        is_complete=True,
-                        is_closed=all(
-                            candle.is_closed
-                            for candle in candles[-2:]
-                        ),
-                        age_seconds=max(
-                            0.0,
-                            now
-                            - float(
-                                cached.get(
-                                    "fetched_at",
-                                    now,
-                                )
-                            ),
-                        ),
-                        message="Datos obtenidos desde caché.",
-                    )
-
-                    return TimeframeData(
-                        timeframe=timeframe,
-                        candles=candles,
-                        quality=quality,
-                    )
-
-            except (
-                KeyError,
-                TypeError,
-                ValueError,
-            ):
-                # Caché inválido: continuamos con Binance.
-                pass
-
-        # --------------------------------------------------------
-        # 2. Consultar Binance
-        # --------------------------------------------------------
+        if isinstance(intervals, str):
+            raise ValueError(
+                "intervals debe ser una secuencia de temporalidades."
+            )
 
         try:
-            candles = self.binance.get_klines(
-                symbol=symbol,
-                interval=timeframe,
-                limit=limit,
-            )
-
-        except BinanceProviderError as exc:
-
-            # Intentamos recuperar datos stale solamente
-            # para diagnóstico/control de continuidad.
-            stale = self.cache.get(
-                key=cache_key,
-                max_age_seconds=24 * 60 * 60,
-                allow_stale=True,
-            )
-
-            if stale is not None:
-
-                try:
-                    candles_data = stale.get(
-                        "candles",
-                        [],
-                    )
-
-                    stale_candles = [
-                        self._candle_from_dict(item)
-                        for item in candles_data
-                        if isinstance(item, dict)
-                    ]
-
-                    valid, message = self._validate_candles(
-                        stale_candles,
-                        timeframe,
-                    )
-
-                    if valid:
-
-                        now = float(self.clock())
-
-                        fetched_at = float(
-                            stale.get(
-                                "fetched_at",
-                                0,
-                            )
-                        )
-
-                        age = max(
-                            0.0,
-                            now - fetched_at,
-                        )
-
-                        quality = DataQuality(
-                            source="binance-cache-stale",
-                            fetched_at=fetched_at,
-                            latest_candle_timestamp=(
-                                stale_candles[-1].timestamp
-                            ),
-                            is_complete=False,
-                            is_closed=all(
-                                candle.is_closed
-                                for candle in stale_candles[-2:]
-                            ),
-                            age_seconds=age,
-                            message=(
-                                "Binance no respondió. "
-                                "Datos antiguos disponibles "
-                                "solo para diagnóstico; "
-                                "no deben generar una nueva "
-                                "señal operativa."
-                            ),
-                        )
-
-                        return TimeframeData(
-                            timeframe=timeframe,
-                            candles=stale_candles,
-                            quality=quality,
-                        )
-
-                except (
-                    KeyError,
-                    TypeError,
-                    ValueError,
-                ):
-                    pass
-
-            raise MarketDataError(
-                f"No se pudieron obtener datos Binance "
-                f"para {symbol} {timeframe}: {exc}"
+            values = tuple(intervals)
+        except TypeError as exc:
+            raise ValueError(
+                "intervals debe ser iterable."
             ) from exc
 
-        # --------------------------------------------------------
-        # 3. Validar datos recién obtenidos
-        # --------------------------------------------------------
-
-        valid, message = self._validate_candles(
-            candles,
-            timeframe,
-        )
-
-        if not valid:
-            raise MarketDataError(
-                f"Datos Binance inválidos para "
-                f"{symbol} {timeframe}: {message}"
+        if not values:
+            raise ValueError(
+                "Debe existir al menos una temporalidad."
             )
 
-        # --------------------------------------------------------
-        # 4. Guardar caché
-        # --------------------------------------------------------
+        normalized: list[str] = []
 
-        fetched_at = float(self.clock())
-
-        payload = {
-            "symbol": self._normalize_symbol(symbol),
-            "timeframe": timeframe,
-            "fetched_at": fetched_at,
-            "candles": [
-                self._candle_to_dict(candle)
-                for candle in candles
-            ],
-        }
-
-        try:
-            self.cache.set(
-                key=cache_key,
-                payload=payload,
-                source="binance",
-                fetched_at=fetched_at,
-            )
-
-        except CacheError:
-            # El fallo del caché no debe destruir una consulta
-            # válida de mercado.
-            pass
-
-        # --------------------------------------------------------
-        # 5. Calidad de datos
-        # --------------------------------------------------------
-
-        latest_timestamp = candles[-1].timestamp
-
-        quality = DataQuality(
-            source="binance",
-            fetched_at=fetched_at,
-            latest_candle_timestamp=latest_timestamp,
-            is_complete=True,
-            is_closed=all(
-                candle.is_closed
-                for candle in candles[-2:]
-            ),
-            age_seconds=0.0,
-            message=message,
-        )
-
-        return TimeframeData(
-            timeframe=timeframe,
-            candles=candles,
-            quality=quality,
-        )
-
-    # ============================================================
-    # COINGECKO
-    # ============================================================
-
-    def _load_market_ticker(
-        self,
-        symbol: str,
-    ) -> MarketTicker:
-        """
-        Obtiene información de mercado desde CoinGecko.
-
-        CoinGecko se utiliza como inteligencia de mercado,
-        no como fuente de las velas técnicas.
-        """
-
-        normalized = self._normalize_symbol(symbol)
-
-        cache_key = (
-            f"coingecko:"
-            f"market:"
-            f"{normalized}"
-        )
-
-        cached = self.cache.get(
-            key=cache_key,
-            max_age_seconds=self.MARKET_TTL,
-        )
-
-        if cached is not None:
-
-            try:
-                return MarketTicker(
-                    symbol=normalized,
-                    price=float(
-                        cached["price"]
-                    ),
-                    market_cap=float(
-                        cached.get(
-                            "market_cap",
-                            0,
-                        )
-                    ),
-                    volume_24h=float(
-                        cached.get(
-                            "volume_24h",
-                            0,
-                        )
-                    ),
-                    change_1h=float(
-                        cached.get(
-                            "change_1h",
-                            0,
-                        )
-                    ),
-                    change_24h=float(
-                        cached.get(
-                            "change_24h",
-                            0,
-                        )
-                    ),
-                    change_7d=float(
-                        cached.get(
-                            "change_7d",
-                            0,
-                        )
-                    ),
+        for interval in values:
+            if not isinstance(interval, str):
+                raise ValueError(
+                    "Cada temporalidad debe ser una cadena."
                 )
 
-            except (
-                KeyError,
-                TypeError,
-                ValueError,
-            ):
-                pass
+            value = interval.strip()
 
-        try:
-            data = self.coingecko.get_asset_market(
-                normalized,
+            if not value:
+                raise ValueError(
+                    "Una temporalidad no puede estar vacía."
+                )
+
+            if value not in cls.ALLOWED_INTERVALS:
+                raise ValueError(
+                    f"Temporalidad no soportada: {value}"
+                )
+
+            if value in normalized:
+                raise ValueError(
+                    f"Temporalidad duplicada: {value}"
+                )
+
+            normalized.append(value)
+
+        return tuple(normalized)
+
+    @classmethod
+    def _validate_limit(
+        cls,
+        limit: int,
+    ) -> int:
+        if isinstance(limit, bool):
+            raise ValueError(
+                "limit debe ser un entero positivo."
             )
 
-        except CoinGeckoProviderError as exc:
-            raise MarketDataError(
-                f"No se pudo obtener información "
-                f"de CoinGecko para {normalized}: {exc}"
-            ) from exc
-
-        if data is None:
-            raise MarketDataError(
-                f"CoinGecko no encontró información "
-                f"para {normalized}."
+        if not isinstance(limit, int):
+            raise ValueError(
+                "limit debe ser un entero."
             )
-
-        try:
-            ticker = MarketTicker(
-                symbol=normalized,
-                price=float(
-                    data.get("price", 0)
-                ),
-                market_cap=float(
-                    data.get(
-                        "market_cap",
-                        0,
-                    )
-                ),
-                volume_24h=float(
-                    data.get(
-                        "volume_24h",
-                        0,
-                    )
-                ),
-                change_1h=float(
-                    data.get(
-                        "change_1h",
-                        0,
-                    )
-                ),
-                change_24h=float(
-                    data.get(
-                        "change_24h",
-                        0,
-                    )
-                ),
-                change_7d=float(
-                    data.get(
-                        "change_7d",
-                        0,
-                    )
-                ),
-            )
-
-        except (
-            TypeError,
-            ValueError,
-        ) as exc:
-            raise MarketDataError(
-                f"Ticker CoinGecko inválido "
-                f"para {normalized}."
-            ) from exc
-
-        if ticker.price <= 0:
-            raise MarketDataError(
-                f"Precio inválido de CoinGecko "
-                f"para {normalized}."
-            )
-
-        payload = {
-            "symbol": ticker.symbol,
-            "price": ticker.price,
-            "market_cap": ticker.market_cap,
-            "volume_24h": ticker.volume_24h,
-            "change_1h": ticker.change_1h,
-            "change_24h": ticker.change_24h,
-            "change_7d": ticker.change_7d,
-        }
-
-        try:
-            self.cache.set(
-                key=cache_key,
-                payload=payload,
-                source="coingecko",
-                fetched_at=float(self.clock()),
-            )
-
-        except CacheError:
-            pass
-
-        return ticker
-
-    # ============================================================
-    # ACTIVO COMPLETO
-    # ============================================================
-
-    def get_asset(
-        self,
-        symbol: str,
-        timeframes: tuple[str, ...] = DEFAULT_TIMEFRAMES,
-        limit: int = DEFAULT_CANDLE_LIMIT,
-    ) -> AssetMarketData:
-        """
-        Construye el conjunto completo de datos de un activo.
-
-        Ejemplo:
-
-            BTC
-              ├── ticker CoinGecko
-              ├── 15m Binance
-              ├── 1h Binance
-              ├── 4h Binance
-              └── 1d Binance
-        """
-
-        normalized = self._normalize_symbol(symbol)
 
         if limit <= 0:
             raise ValueError(
                 "limit debe ser mayor que cero."
             )
 
-        if not timeframes:
+        if limit > cls.MAX_LIMIT:
             raise ValueError(
-                "Debe existir al menos un timeframe."
+                f"limit no puede superar {cls.MAX_LIMIT}."
             )
 
-        invalid_timeframes = [
-            timeframe
-            for timeframe in timeframes
-            if timeframe not in self.DEFAULT_TIMEFRAMES
-        ]
+        return limit
 
-        if invalid_timeframes:
-            raise ValueError(
-                "Timeframes no soportados: "
-                + ", ".join(invalid_timeframes)
-            )
-
-        ticker = self._load_market_ticker(
-            normalized,
-        )
-
-        timeframe_data: dict[str, TimeframeData] = {}
-
-        for timeframe in timeframes:
-
-            data = self._load_binance_timeframe(
-                symbol=normalized,
-                timeframe=timeframe,
-                limit=limit,
-            )
-
-            timeframe_data[timeframe] = data
-
-        return AssetMarketData(
-            symbol=normalized,
-            ticker=ticker,
-            timeframes=timeframe_data,
-        )
-
-    # ============================================================
-    # MERCADO GLOBAL
-    # ============================================================
-
-    def get_global_market(
-        self,
-    ) -> dict[str, Any]:
-        """
-        Obtiene el estado global del mercado desde CoinGecko.
-
-        Posteriormente estos datos alimentarán el cálculo
-        del régimen de mercado.
-        """
-
-        cache_key = "coingecko:global"
-
-        cached = self.cache.get(
-            key=cache_key,
-            max_age_seconds=self.GLOBAL_TTL,
-        )
-
-        if cached is not None:
-            return cached
-
-        try:
-            data = self.coingecko.get_global_market()
-
-        except CoinGeckoProviderError as exc:
-            raise MarketDataError(
-                f"No se pudo obtener el mercado global: {exc}"
-            ) from exc
-
-        if not isinstance(data, dict):
-            raise MarketDataError(
-                "Datos globales inválidos."
-            )
-
-        fetched_at = float(self.clock())
-
-        payload = {
-            **data,
-            "fetched_at": fetched_at,
-        }
-
-        try:
-            self.cache.set(
-                key=cache_key,
-                payload=payload,
-                source="coingecko",
-                fetched_at=fetched_at,
-            )
-
-        except CacheError:
-            pass
-
-        return payload
-
-    # ============================================================
-    # VARIOS ACTIVOS
-    # ============================================================
-
-    def get_assets(
-        self,
-        symbols: list[str] | tuple[str, ...],
-        timeframes: tuple[str, ...] = DEFAULT_TIMEFRAMES,
-        limit: int = DEFAULT_CANDLE_LIMIT,
-    ) -> dict[str, AssetMarketData]:
-        """
-        Obtiene varios activos.
-
-        Si un activo falla, no se inventan datos.
-        El error se propaga para que la capa superior
-        pueda decidir cómo manejarlo.
-        """
-
-        if not symbols:
-            raise ValueError(
-                "Debe proporcionarse al menos un símbolo."
-            )
-
-        result: dict[str, AssetMarketData] = {}
-
-        for symbol in symbols:
-
-            normalized = self._normalize_symbol(
-                symbol
-            )
-
-            result[normalized] = self.get_asset(
-                symbol=normalized,
-                timeframes=timeframes,
-                limit=limit,
-            )
-
-        return result
-
-    # ============================================================
-    # RESUMEN DE CALIDAD
-    # ============================================================
+    # =========================================================
+    # VALIDACIÓN NUMÉRICA
+    # =========================================================
 
     @staticmethod
-    def data_quality_summary(
-        asset: AssetMarketData,
+    def _finite_number(
+        value: Any,
+        field_name: str,
+        *,
+        allow_zero: bool = True,
+    ) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError) as exc:
+            raise MarketDataError(
+                f"{field_name} no es numérico."
+            ) from exc
+
+        if number != number:
+            raise MarketDataError(
+                f"{field_name} contiene NaN."
+            )
+
+        if number in (
+            float("inf"),
+            float("-inf"),
+        ):
+            raise MarketDataError(
+                f"{field_name} contiene infinito."
+            )
+
+        if not allow_zero and number <= 0:
+            raise MarketDataError(
+                f"{field_name} debe ser mayor que cero."
+            )
+
+        return number
+
+    # =========================================================
+    # VALIDACIÓN DE TICKER
+    # =========================================================
+
+    @classmethod
+    def _build_ticker(
+        cls,
+        symbol: str,
+        raw: Mapping[str, Any],
+    ) -> MarketTicker:
+        if not isinstance(raw, Mapping):
+            raise MarketDataError(
+                "CoinGecko no devolvió un objeto de mercado válido."
+            )
+
+        if "price" not in raw:
+            raise MarketDataError(
+                "Falta price en los datos de mercado."
+            )
+
+        price = cls._finite_number(
+            raw.get("price"),
+            "price",
+            allow_zero=False,
+        )
+
+        market_cap = cls._finite_number(
+            raw.get("market_cap", 0.0),
+            "market_cap",
+        )
+
+        volume_24h = cls._finite_number(
+            raw.get("volume_24h", 0.0),
+            "volume_24h",
+        )
+
+        change_1h = cls._finite_number(
+            raw.get("change_1h", 0.0),
+            "change_1h",
+        )
+
+        change_24h = cls._finite_number(
+            raw.get("change_24h", 0.0),
+            "change_24h",
+        )
+
+        change_7d = cls._finite_number(
+            raw.get("change_7d", 0.0),
+            "change_7d",
+        )
+
+        return MarketTicker(
+            symbol=symbol,
+            price=price,
+            market_cap=market_cap,
+            volume_24h=volume_24h,
+            change_1h=change_1h,
+            change_24h=change_24h,
+            change_7d=change_7d,
+        )
+
+    # =========================================================
+    # VALIDACIÓN DE VELAS
+    # =========================================================
+
+    @classmethod
+    def _validate_candle(
+        cls,
+        candle: Any,
+        timeframe: str,
+    ) -> Candle:
+        if not isinstance(candle, Candle):
+            raise MarketDataError(
+                f"Vela inválida en {timeframe}."
+            )
+
+        if not isinstance(
+            candle.timestamp,
+            int,
+        ):
+            raise MarketDataError(
+                f"Timestamp inválido en {timeframe}."
+            )
+
+        if candle.timestamp <= 0:
+            raise MarketDataError(
+                f"Timestamp inválido en {timeframe}."
+            )
+
+        open_price = cls._finite_number(
+            candle.open,
+            f"{timeframe}.open",
+            allow_zero=False,
+        )
+
+        high_price = cls._finite_number(
+            candle.high,
+            f"{timeframe}.high",
+            allow_zero=False,
+        )
+
+        low_price = cls._finite_number(
+            candle.low,
+            f"{timeframe}.low",
+            allow_zero=False,
+        )
+
+        close_price = cls._finite_number(
+            candle.close,
+            f"{timeframe}.close",
+            allow_zero=False,
+        )
+
+        volume = cls._finite_number(
+            candle.volume,
+            f"{timeframe}.volume",
+        )
+
+        if high_price < low_price:
+            raise MarketDataError(
+                f"High menor que low en {timeframe}."
+            )
+
+        if not (
+            low_price
+            <= open_price
+            <= high_price
+        ):
+            raise MarketDataError(
+                f"Open fuera del rango de la vela en {timeframe}."
+            )
+
+        if not (
+            low_price
+            <= close_price
+            <= high_price
+        ):
+            raise MarketDataError(
+                f"Close fuera del rango de la vela en {timeframe}."
+            )
+
+        return Candle(
+            timestamp=candle.timestamp,
+            open=open_price,
+            high=high_price,
+            low=low_price,
+            close=close_price,
+            volume=volume,
+            is_closed=bool(
+                candle.is_closed
+            ),
+        )
+
+    @classmethod
+    def _validate_timeframe(
+        cls,
+        timeframe: str,
+        data: Any,
+    ) -> TimeframeData:
+        if not isinstance(
+            data,
+            TimeframeData,
+        ):
+            raise MarketDataError(
+                f"Datos inválidos para {timeframe}."
+            )
+
+        candles = data.candles
+
+        if not isinstance(
+            candles,
+            list,
+        ):
+            try:
+                candles = list(candles)
+            except TypeError as exc:
+                raise MarketDataError(
+                    f"Las velas de {timeframe} no son válidas."
+                ) from exc
+
+        if not candles:
+            raise MarketDataError(
+                f"Binance no devolvió velas para {timeframe}."
+            )
+
+        validated: list[Candle] = []
+
+        previous_timestamp: int | None = None
+
+        for candle in candles:
+            validated_candle = cls._validate_candle(
+                candle,
+                timeframe,
+            )
+
+            if (
+                previous_timestamp is not None
+                and validated_candle.timestamp
+                <= previous_timestamp
+            ):
+                raise MarketDataError(
+                    f"Velas fuera de orden en {timeframe}."
+                )
+
+            validated.append(
+                validated_candle
+            )
+
+            previous_timestamp = (
+                validated_candle.timestamp
+            )
+
+        return TimeframeData(
+            timeframe=timeframe,
+            candles=validated,
+            quality=data.quality,
+        )
+
+    # =========================================================
+    # OBTENER ACTIVO
+    # =========================================================
+
+    def get_asset(
+        self,
+        symbol: str,
+        intervals: Sequence[str] | None = None,
+        limit: int = 200,
+    ) -> AssetMarketData:
+        normalized_symbol = self._normalize_symbol(
+            symbol
+        )
+
+        base_symbol = self._base_symbol(
+            normalized_symbol
+        )
+
+        selected_intervals = self._validate_intervals(
+            intervals
+            if intervals is not None
+            else self.DEFAULT_INTERVALS
+        )
+
+        validated_limit = self._validate_limit(
+            limit
+        )
+
+        # -----------------------------------------------------
+        # 1. CoinGecko
+        # -----------------------------------------------------
+
+        try:
+            raw_market = (
+                self.coingecko.get_asset_market(
+                    base_symbol
+                )
+            )
+        except Exception as exc:
+            raise MarketDataError(
+                f"No se pudo obtener mercado de {base_symbol} "
+                f"desde CoinGecko: {exc}"
+            ) from exc
+
+        if not raw_market:
+            raise MarketDataError(
+                f"CoinGecko no devolvió datos para {base_symbol}."
+            )
+
+        ticker = self._build_ticker(
+            normalized_symbol,
+            raw_market,
+        )
+
+        # -----------------------------------------------------
+        # 2. Binance
+        # -----------------------------------------------------
+
+        try:
+            raw_timeframes = (
+                self.binance.get_multi_timeframe(
+                    normalized_symbol,
+                    intervals=selected_intervals,
+                    limit=validated_limit,
+                )
+            )
+        except TypeError:
+            # Compatibilidad con implementaciones que
+            # utilizan argumentos posicionales.
+            try:
+                raw_timeframes = (
+                    self.binance.get_multi_timeframe(
+                        normalized_symbol,
+                        selected_intervals,
+                        validated_limit,
+                    )
+                )
+            except Exception as exc:
+                raise MarketDataError(
+                    f"No se pudo obtener OHLCV de "
+                    f"{normalized_symbol} desde Binance: {exc}"
+                ) from exc
+
+        except Exception as exc:
+            raise MarketDataError(
+                f"No se pudo obtener OHLCV de "
+                f"{normalized_symbol} desde Binance: {exc}"
+            ) from exc
+
+        if not isinstance(
+            raw_timeframes,
+            Mapping,
+        ):
+            raise MarketDataError(
+                "Binance no devolvió un mapa de temporalidades válido."
+            )
+
+        # -----------------------------------------------------
+        # 3. Verificar que no falte ninguna temporalidad
+        # -----------------------------------------------------
+
+        missing = [
+            timeframe
+            for timeframe in selected_intervals
+            if timeframe not in raw_timeframes
+        ]
+
+        if missing:
+            raise MarketDataError(
+                "Binance no devolvió las temporalidades requeridas: "
+                + ", ".join(missing)
+            )
+
+        # -----------------------------------------------------
+        # 4. Validar todas las velas
+        # -----------------------------------------------------
+
+        validated_timeframes: dict[
+            str,
+            TimeframeData,
+        ] = {}
+
+        for timeframe in selected_intervals:
+            validated_timeframes[timeframe] = (
+                self._validate_timeframe(
+                    timeframe,
+                    raw_timeframes[timeframe],
+                )
+            )
+
+        # -----------------------------------------------------
+        # 5. Construir objeto final
+        # -----------------------------------------------------
+
+        return AssetMarketData(
+            symbol=normalized_symbol,
+            ticker=ticker,
+            timeframes=validated_timeframes,
+        )
+
+    # =========================================================
+    # MÉTODOS DE CONVENIENCIA
+    # =========================================================
+
+    def get_price(
+        self,
+        symbol: str,
+    ) -> float:
+        return self.get_asset(
+            symbol,
+            intervals=("1h",),
+            limit=2,
+        ).price
+
+    def get_timeframes(
+        self,
+        symbol: str,
+        intervals: Sequence[str] | None = None,
+        limit: int = 200,
+    ) -> dict[str, TimeframeData]:
+        asset = self.get_asset(
+            symbol,
+            intervals=intervals,
+            limit=limit,
+        )
+
+        return asset.timeframes
+
+    def get_candles(
+        self,
+        symbol: str,
+        timeframe: str,
+        limit: int = 200,
+    ) -> list[Candle]:
+        normalized_intervals = self._validate_intervals(
+            (timeframe,)
+        )
+
+        asset = self.get_asset(
+            symbol,
+            intervals=normalized_intervals,
+            limit=limit,
+        )
+
+        data = asset.get_timeframe(
+            normalized_intervals[0]
+        )
+
+        if data is None:
+            raise MarketDataError(
+                f"No existen datos para {timeframe}."
+            )
+
+        return list(data.candles)
+
+    def get_last_candle(
+        self,
+        symbol: str,
+        timeframe: str,
+    ) -> Candle:
+        candles = self.get_candles(
+            symbol,
+            timeframe,
+            limit=2,
+        )
+
+        if not candles:
+            raise MarketDataError(
+                f"No existe última vela para {timeframe}."
+            )
+
+        return candles[-1]
+
+    # =========================================================
+    # HEALTH CHECK
+    # =========================================================
+
+    def health_check(
+        self,
+        symbol: str = "BTC",
     ) -> dict[str, Any]:
-        """
-        Devuelve un resumen sencillo de la calidad de datos
-        de un activo.
+        try:
+            asset = self.get_asset(
+                symbol,
+                intervals=("15m", "1h"),
+                limit=10,
+            )
 
-        Será útil para el sistema de alertas y para debugging.
-        """
-
-        summary: dict[str, Any] = {
-            "symbol": asset.symbol,
-            "price": asset.price,
-            "timeframes": {},
-        }
-
-        for timeframe, data in asset.timeframes.items():
-
-            quality = data.quality
-
-            if quality is None:
-                summary["timeframes"][timeframe] = {
-                    "available": False,
-                    "message": "Sin información de calidad.",
-                }
-                continue
-
-            summary["timeframes"][timeframe] = {
-                "available": bool(data.candles),
-                "source": quality.source,
-                "fetched_at": quality.fetched_at,
-                "latest_candle_timestamp": (
-                    quality.latest_candle_timestamp
+            return {
+                "ok": True,
+                "symbol": asset.symbol,
+                "price": asset.price,
+                "timeframes": list(
+                    asset.timeframes.keys()
                 ),
-                "is_complete": quality.is_complete,
-                "is_closed": quality.is_closed,
-                "age_seconds": quality.age_seconds,
-                "message": quality.message,
-                "candle_count": len(data.candles),
+                "message": "Market data OK",
             }
 
-        return summary
+        except Exception as exc:
+            return {
+                "ok": False,
+                "symbol": symbol,
+                "price": None,
+                "timeframes": [],
+                "message": str(exc),
+            }
