@@ -468,15 +468,16 @@ class MarketService:
             normalized_symbol
         )
 
-        selected_intervals = self._validate_intervals(
-            intervals
-            if intervals is not None
-            else self.DEFAULT_INTERVALS
-        )
+        if intervals is None:
+    raise ValueError(
+        "intervals no puede ser None."
+    )
 
-        validated_limit = self._validate_limit(
-            limit
-        )
+selected_intervals = self._validate_intervals(
+    intervals
+)
+
+      
 
         # -----------------------------------------------------
         # 1. CoinGecko
