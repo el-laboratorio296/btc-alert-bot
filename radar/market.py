@@ -457,7 +457,7 @@ class MarketService:
     def get_asset(
         self,
         symbol: str,
-        intervals: Sequence[str] | None = None,
+        intervals: Sequence[str] | None = DEFAULT_INTERVALS,
         limit: int = 200,
     ) -> AssetMarketData:
         normalized_symbol = self._normalize_symbol(
@@ -469,7 +469,13 @@ class MarketService:
         )
 
         # -----------------------------------------------------
-        # Validaciones obligatorias
+        # IMPORTANTE:
+        #
+        # Si el usuario no proporciona intervals:
+        #     se utiliza DEFAULT_INTERVALS.
+        #
+        # Si proporciona explícitamente None:
+        #     se rechaza.
         # -----------------------------------------------------
 
         if intervals is None:
@@ -616,7 +622,7 @@ class MarketService:
     def get_timeframes(
         self,
         symbol: str,
-        intervals: Sequence[str] | None = None,
+        intervals: Sequence[str] | None = DEFAULT_INTERVALS,
         limit: int = 200,
     ) -> dict[str, TimeframeData]:
         asset = self.get_asset(
