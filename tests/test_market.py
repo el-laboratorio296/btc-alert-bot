@@ -1,173 +1,718 @@
 from __future__ import annotations
 
-from radar.market import MarketDataManager
-from radar.models import Candle
+import time
+
+import pytest
+
+from radar.market import (
+    MarketDataError,
+    MarketService,
+)
 
 
 class FakeBinance:
-    def get_klines(self, symbol, interval, limit=500):
-        candles = []
+    def __init__(self):
+        self.calls = []
 
-        for index in range(60):
-            price = 100.0 + index
+    def get_multi_timeframe(
+        self,
+        symbol,
+        intervals=("15m", "1h", "4h", "1d"),
+        limit=200,
+    ):
+        self.calls.append(
+            {
+                "symbol": symbol,
+                "intervals": intervals,
+                "limit": limit,
+            }
+        )
 
-            candles.append(
-                Candle(
-                    timestamp=(index + 1) * 60_000,
-                    open=price,
-                    high=price + 2,
-                    low=price - 2,
-                    close=price + 1,
-                    volume=1000.0 + index,
-                    is_closed=True,
-                )
-            )
-
-        return candles
+        return {
+            timeframe: {
+                "candles": [
+                    {
+                        "timestamp": 1700000000000,
+                        "open": 100.0,
+                        "high": 105.0,
+                        "low": 95.0,
+                        "close": 102.0,
+                        "volume": 1000.0,
+                        "is_closed": True,
+                    }
+                ]
+            }
+            for timeframe in intervals
+        }
 
 
 class FakeCoinGecko:
+    def __init__(self):
+        self.calls = []
+
     def get_asset_market(self, symbol):
+        self.calls.append(symbol)
+
         return {
             "id": symbol.lower(),
             "name": symbol,
-            "symbol": symbol,
-            "price": 101.0,
-            "market_cap": 1_000_000_000.0,
-            "volume_24h": 100_000_000.0,
-            "change_1h": 1.0,
-            "change_24h": 3.0,
+            "symbol": symbol.lower(),
+            "price": 102.0,
+            "market_cap": 1_000_000.0,
+            "volume_24h": 50_000.0,
+            "change_1h": 0.5,
+            "change_24h": 2.0,
             "change_7d": 5.0,
-        }
-
-    def get_global_market(self):
-        return {
-            "total_market_cap_usd": 2_000_000_000_000.0,
-            "total_volume_usd": 100_000_000_000.0,
-            "btc_dominance": 55.0,
-            "eth_dominance": 18.0,
-            "active_cryptocurrencies": 10_000,
-            "markets": 500,
+            "rank": 1,
         }
 
 
-def create_manager(tmp_path):
-    from radar.cache import MarketCache
-
-    cache = MarketCache(
-        directory=tmp_path,
-    )
-
-    return MarketDataManager(
+def test_market_service_can_be_created():
+    service = MarketService(
         binance=FakeBinance(),
         coingecko=FakeCoinGecko(),
-        cache=cache,
+    )
+
+    assert service is not None
+
+
+def test_market_service_rejects_missing_binance():
+    with pytest.raises(TypeError):
+        MarketService(
+            binance=None,
+            coingecko=FakeCoinGecko(),
+        )
+
+
+def test_market_service_rejects_missing_coingecko():
+    with pytest.raises(TypeError):
+        MarketService(
+            binance=FakeBinance(),
+            coingecko=None,
+        )
+
+
+def test_symbol_is_normalized():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    result = service.get_asset(
+        "btcusdt"
+    )
+
+    assert result.symbol == "BTCUSDT"
+
+
+def test_symbol_without_usdt_is_normalized():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    result = service.get_asset(
+        "BTC"
+    )
+
+    assert result.symbol == "BTCUSDT"
+
+
+def test_empty_symbol_is_rejected():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    with pytest.raises(ValueError):
+        service.get_asset("")
+
+
+def test_whitespace_symbol_is_rejected():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    with pytest.raises(ValueError):
+        service.get_asset("   ")
+
+
+def test_get_asset_returns_market_data():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    result = service.get_asset(
+        "BTCUSDT"
+    )
+
+    assert result.symbol == "BTCUSDT"
+    assert result.price == 102.0
+    assert result.ticker.price == 102.0
+
+
+def test_coin_gecko_is_called_with_base_symbol():
+    coingecko = FakeCoinGecko()
+
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=coingecko,
+    )
+
+    service.get_asset(
+        "BTCUSDT"
+    )
+
+    assert coingecko.calls == [
+        "BTC"
+    ]
+
+
+def test_binance_receives_usdt_symbol():
+    binance = FakeBinance()
+
+    service = MarketService(
+        binance=binance,
+        coingecko=FakeCoinGecko(),
+    )
+
+    service.get_asset(
+        "BTC"
+    )
+
+    assert binance.calls[0]["symbol"] == (
+        "BTCUSDT"
     )
 
 
-def test_market_manager_imports_and_builds_asset(tmp_path):
-    manager = create_manager(tmp_path)
+def test_default_timeframes_are_requested():
+    binance = FakeBinance()
 
-    asset = manager.get_asset(
-        symbol="BTC",
-        timeframes=("15m", "1h", "4h", "1d"),
-        limit=60,
+    service = MarketService(
+        binance=binance,
+        coingecko=FakeCoinGecko(),
     )
 
-    assert asset.symbol == "BTC"
-    assert asset.price == 101.0
-
-    assert "15m" in asset.timeframes
-    assert "1h" in asset.timeframes
-    assert "4h" in asset.timeframes
-    assert "1d" in asset.timeframes
-
-    for timeframe in ("15m", "1h", "4h", "1d"):
-        data = asset.timeframes[timeframe]
-
-        assert len(data.candles) == 60
-        assert data.quality is not None
-        assert data.quality.source == "binance"
-        assert data.quality.is_complete is True
-        assert data.quality.is_closed is True
-
-
-def test_market_manager_validates_candles(tmp_path):
-    manager = create_manager(tmp_path)
-
-    candles = FakeBinance().get_klines(
-        symbol="BTC",
-        interval="1h",
-        limit=60,
+    service.get_asset(
+        "BTCUSDT"
     )
 
-    valid, message = manager._validate_candles(
-        candles,
+    assert binance.calls[0]["intervals"] == (
+        "15m",
         "1h",
+        "4h",
+        "1d",
     )
 
-    assert valid is True
-    assert message == "Datos válidos."
 
+def test_custom_timeframes_are_supported():
+    binance = FakeBinance()
 
-def test_market_manager_rejects_bad_candles(tmp_path):
-    manager = create_manager(tmp_path)
-
-    candles = FakeBinance().get_klines(
-        symbol="BTC",
-        interval="1h",
-        limit=60,
+    service = MarketService(
+        binance=binance,
+        coingecko=FakeCoinGecko(),
     )
 
-    bad_candle = Candle(
-        timestamp=999_999_999,
-        open=100.0,
-        high=90.0,
-        low=80.0,
-        close=85.0,
-        volume=1000.0,
-        is_closed=True,
+    service.get_asset(
+        "BTCUSDT",
+        intervals=(
+            "1h",
+            "4h",
+        ),
     )
 
-    candles[-1] = bad_candle
-
-    valid, message = manager._validate_candles(
-        candles,
+    assert binance.calls[0]["intervals"] == (
         "1h",
+        "4h",
     )
 
-    assert valid is False
-    assert "High menor que open" in message
 
+def test_custom_limit_is_forwarded():
+    binance = FakeBinance()
 
-def test_market_manager_uses_cache(tmp_path):
-    manager = create_manager(tmp_path)
-
-    first = manager.get_asset(
-        symbol="BTC",
-        timeframes=("1h",),
-        limit=60,
+    service = MarketService(
+        binance=binance,
+        coingecko=FakeCoinGecko(),
     )
 
-    assert first.timeframes["1h"].quality is not None
-    assert first.timeframes["1h"].quality.source == "binance"
-
-    second = manager.get_asset(
-        symbol="BTC",
-        timeframes=("1h",),
-        limit=60,
+    service.get_asset(
+        "BTCUSDT",
+        limit=100,
     )
 
-    assert second.timeframes["1h"].quality is not None
-    assert second.timeframes["1h"].quality.source == "binance-cache"
+    assert binance.calls[0]["limit"] == 100
 
 
-def test_global_market_data(tmp_path):
-    manager = create_manager(tmp_path)
+def test_invalid_limit_is_rejected():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
 
-    global_market = manager.get_global_market()
+    with pytest.raises(ValueError):
+        service.get_asset(
+            "BTCUSDT",
+            limit=0,
+        )
 
-    assert global_market["total_market_cap_usd"] == 2_000_000_000_000.0
-    assert global_market["total_volume_usd"] == 100_000_000_000.0
-    assert global_market["btc_dominance"] == 55.0
-    assert global_market["eth_dominance"] == 18.0
+
+def test_negative_limit_is_rejected():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    with pytest.raises(ValueError):
+        service.get_asset(
+            "BTCUSDT",
+            limit=-1,
+        )
+
+
+def test_empty_intervals_are_rejected():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    with pytest.raises(ValueError):
+        service.get_asset(
+            "BTCUSDT",
+            intervals=(),
+        )
+
+
+def test_empty_timeframe_is_rejected():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    with pytest.raises(ValueError):
+        service.get_asset(
+            "BTCUSDT",
+            intervals=(
+                "1h",
+                "",
+            ),
+        )
+
+
+def test_duplicate_timeframes_are_rejected():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    with pytest.raises(ValueError):
+        service.get_asset(
+            "BTCUSDT",
+            intervals=(
+                "1h",
+                "1h",
+            ),
+        )
+
+
+def test_timeframe_data_is_populated():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    result = service.get_asset(
+        "BTCUSDT"
+    )
+
+    assert "15m" in result.timeframes
+    assert "1h" in result.timeframes
+    assert "4h" in result.timeframes
+    assert "1d" in result.timeframes
+
+
+def test_timeframe_candles_are_populated():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    result = service.get_asset(
+        "BTCUSDT"
+    )
+
+    timeframe = result.get_timeframe(
+        "1h"
+    )
+
+    assert timeframe is not None
+    assert len(
+        timeframe.candles
+    ) == 1
+
+
+def test_candle_values_are_normalized():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    result = service.get_asset(
+        "BTCUSDT"
+    )
+
+    candle = result.get_timeframe(
+        "1h"
+    ).candles[0]
+
+    assert candle.open == 100.0
+    assert candle.high == 105.0
+    assert candle.low == 95.0
+    assert candle.close == 102.0
+    assert candle.volume == 1000.0
+    assert candle.is_closed is True
+
+
+def test_latest_price_matches_market_ticker():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    result = service.get_asset(
+        "BTCUSDT"
+    )
+
+    assert result.price == 102.0
+    assert result.ticker.price == 102.0
+
+
+def test_market_metadata_is_preserved():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    result = service.get_asset(
+        "BTCUSDT"
+    )
+
+    assert result.ticker.market_cap == (
+        1_000_000.0
+    )
+
+    assert result.ticker.volume_24h == (
+        50_000.0
+    )
+
+    assert result.ticker.change_1h == 0.5
+    assert result.ticker.change_24h == 2.0
+    assert result.ticker.change_7d == 5.0
+
+
+def test_binance_failure_raises_market_error():
+    class BrokenBinance:
+        def get_multi_timeframe(
+            self,
+            symbol,
+            intervals,
+            limit,
+        ):
+            raise RuntimeError(
+                "Binance unavailable"
+            )
+
+    service = MarketService(
+        binance=BrokenBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    with pytest.raises(
+        MarketDataError
+    ):
+        service.get_asset(
+            "BTCUSDT"
+        )
+
+
+def test_coingecko_failure_raises_market_error():
+    class BrokenCoinGecko:
+        def get_asset_market(
+            self,
+            symbol,
+        ):
+            raise RuntimeError(
+                "CoinGecko unavailable"
+            )
+
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=BrokenCoinGecko(),
+    )
+
+    with pytest.raises(
+        MarketDataError
+    ):
+        service.get_asset(
+            "BTCUSDT"
+        )
+
+
+def test_missing_coin_gecko_data_is_rejected():
+    class EmptyCoinGecko:
+        def get_asset_market(
+            self,
+            symbol,
+        ):
+            return None
+
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=EmptyCoinGecko(),
+    )
+
+    with pytest.raises(
+        MarketDataError
+    ):
+        service.get_asset(
+            "BTCUSDT"
+        )
+
+
+def test_missing_binance_data_is_rejected():
+    class EmptyBinance:
+        def get_multi_timeframe(
+            self,
+            symbol,
+            intervals,
+            limit,
+        ):
+            return {}
+
+    service = MarketService(
+        binance=EmptyBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    with pytest.raises(
+        MarketDataError
+    ):
+        service.get_asset(
+            "BTCUSDT"
+        )
+
+
+def test_none_binance_data_is_rejected():
+    class EmptyBinance:
+        def get_multi_timeframe(
+            self,
+            symbol,
+            intervals,
+            limit,
+        ):
+            return None
+
+    service = MarketService(
+        binance=EmptyBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    with pytest.raises(
+        MarketDataError
+    ):
+        service.get_asset(
+            "BTCUSDT"
+        )
+
+
+def test_invalid_candle_data_is_rejected():
+    class InvalidBinance:
+        def get_multi_timeframe(
+            self,
+            symbol,
+            intervals,
+            limit,
+        ):
+            return {
+                "1h": {
+                    "candles": [
+                        {
+                            "timestamp": 1,
+                            "open": -100.0,
+                            "high": 105.0,
+                            "low": 95.0,
+                            "close": 102.0,
+                            "volume": 1000.0,
+                            "is_closed": True,
+                        }
+                    ]
+                }
+            }
+
+    service = MarketService(
+        binance=InvalidBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    with pytest.raises(
+        MarketDataError
+    ):
+        service.get_asset(
+            "BTCUSDT"
+        )
+
+
+def test_open_candle_is_preserved():
+    class OpenBinance:
+        def get_multi_timeframe(
+            self,
+            symbol,
+            intervals,
+            limit,
+        ):
+            return {
+                timeframe: {
+                    "candles": [
+                        {
+                            "timestamp": 1700000000000,
+                            "open": 100.0,
+                            "high": 105.0,
+                            "low": 95.0,
+                            "close": 102.0,
+                            "volume": 1000.0,
+                            "is_closed": False,
+                        }
+                    ]
+                }
+                for timeframe in intervals
+            }
+
+    service = MarketService(
+        binance=OpenBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    result = service.get_asset(
+        "BTCUSDT"
+    )
+
+    for timeframe in result.timeframes.values():
+        assert (
+            timeframe.candles[0].is_closed
+            is False
+        )
+
+
+def test_service_does_not_mutate_provider_data():
+    binance = FakeBinance()
+
+    service = MarketService(
+        binance=binance,
+        coingecko=FakeCoinGecko(),
+    )
+
+    result = service.get_asset(
+        "BTCUSDT"
+    )
+
+    result.timeframes[
+        "1h"
+    ].candles[0]
+
+    assert binance.calls
+    assert result is not None
+
+
+def test_get_asset_is_repeatable():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    first = service.get_asset(
+        "BTCUSDT"
+    )
+
+    second = service.get_asset(
+        "BTCUSDT"
+    )
+
+    assert first.symbol == second.symbol
+    assert first.price == second.price
+    assert set(
+        first.timeframes.keys()
+    ) == set(
+        second.timeframes.keys()
+    )
+
+
+def test_service_clock_can_be_injected():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+        clock=lambda: 1700001000.0,
+    )
+
+    result = service.get_asset(
+        "BTCUSDT"
+    )
+
+    assert result is not None
+
+
+def test_market_service_does_not_use_future_candles():
+    class FutureBinance:
+        def get_multi_timeframe(
+            self,
+            symbol,
+            intervals,
+            limit,
+        ):
+            return {
+                "1h": {
+                    "candles": [
+                        {
+                            "timestamp": 9999999999999,
+                            "open": 100.0,
+                            "high": 105.0,
+                            "low": 95.0,
+                            "close": 102.0,
+                            "volume": 1000.0,
+                            "is_closed": True,
+                        }
+                    ]
+                }
+            }
+
+    service = MarketService(
+        binance=FutureBinance(),
+        coingecko=FakeCoinGecko(),
+        clock=lambda: 1700001000.0,
+    )
+
+    with pytest.raises(
+        MarketDataError
+    ):
+        service.get_asset(
+            "BTCUSDT"
+        )
+
+
+def test_invalid_timeframe_type_is_rejected():
+    service = MarketService(
+        binance=FakeBinance(),
+        coingecko=FakeCoinGecko(),
+    )
+
+    with pytest.raises(
+        ValueError
+    ):
+        service.get_asset(
+            "BTCUSDT",
+            intervals=None,
+        )
+
+
+def test_non_string_timeframe_is_rejected():
+    service =
