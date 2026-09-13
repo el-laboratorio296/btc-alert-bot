@@ -468,16 +468,25 @@ class MarketService:
             normalized_symbol
         )
 
+        # -----------------------------------------------------
+        # IMPORTANTE:
+        # None debe rechazarse explícitamente.
+        # Esto evita que una llamada incompleta utilice
+        # silenciosamente temporalidades por defecto.
+        # -----------------------------------------------------
+
         if intervals is None:
-    raise ValueError(
-        "intervals no puede ser None."
-    )
+            raise ValueError(
+                "intervals no puede ser None."
+            )
 
-selected_intervals = self._validate_intervals(
-    intervals
-)
+        selected_intervals = self._validate_intervals(
+            intervals
+        )
 
-      
+        validated_limit = self._validate_limit(
+            limit
+        )
 
         # -----------------------------------------------------
         # 1. CoinGecko
@@ -517,6 +526,7 @@ selected_intervals = self._validate_intervals(
                     limit=validated_limit,
                 )
             )
+
         except TypeError:
             # Compatibilidad con implementaciones que
             # utilizan argumentos posicionales.
@@ -528,6 +538,7 @@ selected_intervals = self._validate_intervals(
                         validated_limit,
                     )
                 )
+
             except Exception as exc:
                 raise MarketDataError(
                     f"No se pudo obtener OHLCV de "
@@ -632,68 +643,3 @@ selected_intervals = self._validate_intervals(
         asset = self.get_asset(
             symbol,
             intervals=normalized_intervals,
-            limit=limit,
-        )
-
-        data = asset.get_timeframe(
-            normalized_intervals[0]
-        )
-
-        if data is None:
-            raise MarketDataError(
-                f"No existen datos para {timeframe}."
-            )
-
-        return list(data.candles)
-
-    def get_last_candle(
-        self,
-        symbol: str,
-        timeframe: str,
-    ) -> Candle:
-        candles = self.get_candles(
-            symbol,
-            timeframe,
-            limit=2,
-        )
-
-        if not candles:
-            raise MarketDataError(
-                f"No existe última vela para {timeframe}."
-            )
-
-        return candles[-1]
-
-    # =========================================================
-    # HEALTH CHECK
-    # =========================================================
-
-    def health_check(
-        self,
-        symbol: str = "BTC",
-    ) -> dict[str, Any]:
-        try:
-            asset = self.get_asset(
-                symbol,
-                intervals=("15m", "1h"),
-                limit=10,
-            )
-
-            return {
-                "ok": True,
-                "symbol": asset.symbol,
-                "price": asset.price,
-                "timeframes": list(
-                    asset.timeframes.keys()
-                ),
-                "message": "Market data OK",
-            }
-
-        except Exception as exc:
-            return {
-                "ok": False,
-                "symbol": symbol,
-                "price": None,
-                "timeframes": [],
-                "message": str(exc),
-            }
