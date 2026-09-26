@@ -1,185 +1,148 @@
 from __future__ import annotations
 
+import os
 import sys
 import time
 
-from radar.market import MarketDataManager, MarketDataError
+from radar.market import MarketDataError, MarketService
+from radar.models import DataQuality, TimeframeData
+from radar.providers.binance import BinanceProvider
+from radar.providers.coingecko import CoinGeckoProvider
 
+
+# ============================================================
+# CONFIGURACIÓN
+# ============================================================
 
 SYMBOL = "BTC"
-TIMEFRAMES = ("15m", "1h", "4h", "1d")
+
+TIMEFRAMES = (
+    "15m",
+    "1h",
+    "4h",
+    "1d",
+)
+
 LIMIT = 60
 
 
-def check_binance(manager: MarketDataManager) -> None:
+# ============================================================
+# ADAPTADOR BINANCE
+# ============================================================
+
+class BinanceIntegrationAdapter:
+    """
+    Adaptador entre BinanceProvider y MarketService.
+
+    BinanceProvider entrega:
+
+        dict[str, list[Candle]]
+
+    MarketService trabaja con:
+
+        dict[str, TimeframeData]
+    """
+
+    def __init__(
+        self,
+        provider: BinanceProvider,
+    ) -> None:
+
+        self.provider = provider
+
+    def get_multi_timeframe(
+        self,
+        symbol: str,
+        intervals: tuple[str, ...],
+        limit: int,
+    ) -> dict[str, TimeframeData]:
+
+        raw_data = self.provider.get_multi_timeframe(
+            symbol=symbol,
+            intervals=intervals,
+            limit=limit,
+        )
+
+        now = time.time()
+
+        result: dict[str, TimeframeData] = {}
+
+        for timeframe, candles in raw_data.items():
+
+            if not candles:
+                raise RuntimeError(
+                    f"Binance no devolvió velas "
+                    f"para {timeframe}."
+                )
+
+            latest = candles[-1]
+
+            quality = DataQuality(
+                source="binance",
+                fetched_at=now,
+                latest_candle_timestamp=latest.timestamp,
+                is_complete=len(candles) >= limit,
+                is_closed=latest.is_closed,
+                age_seconds=max(
+                    0.0,
+                    now - (
+                        latest.timestamp / 1000.0
+                    ),
+                ),
+                message=(
+                    "Datos reales obtenidos "
+                    "desde Binance Data API."
+                ),
+            )
+
+            result[timeframe] = TimeframeData(
+                timeframe=timeframe,
+                candles=candles,
+                quality=quality,
+            )
+
+        return result
+
+
+# ============================================================
+# PRUEBA BINANCE
+# ============================================================
+
+def check_binance(
+    provider: BinanceProvider,
+) -> None:
+
+    print()
     print("=" * 60)
     print("PRUEBA REAL: BINANCE")
     print("=" * 60)
 
     for timeframe in TIMEFRAMES:
-        print(f"\n→ BTC {timeframe}")
 
-        data = manager._load_binance_timeframe(
+        print()
+        print(f"→ BTC {timeframe}")
+
+        candles = provider.get_klines(
             symbol=SYMBOL,
-            timeframe=timeframe,
+            interval=timeframe,
             limit=LIMIT,
         )
 
-        if not data.candles:
+        if not candles:
+
             raise RuntimeError(
-                f"Binance no devolvió velas para {timeframe}."
+                f"Binance no devolvió velas "
+                f"para {timeframe}."
             )
 
-        print(f"  Velas recibidas: {len(data.candles)}")
-        print(f"  Fuente: {data.quality.source}")
+        print(
+            f"  Velas recibidas: "
+            f"{len(candles)}"
+        )
+
         print(
             f"  Último cierre: "
-            f"{data.candles[-1].close}"
-        )
-        print(
-            f"  Último timestamp: "
-            f"{data.candles[-1].timestamp}"
-        )
-        print(
-            f"  Última vela cerrada: "
-            f"{data.candles[-1].is_closed}"
+            f"{candles[-1].close}"
         )
 
-        if len(data.candles) < 50:
-            raise RuntimeError(
-                f"Insuficientes velas para {timeframe}."
-            )
-
-        if data.quality is None:
-            raise RuntimeError(
-                f"Sin información de calidad para {timeframe}."
-            )
-
-    print("\n✓ Binance respondió correctamente.")
-
-
-def check_coingecko(manager: MarketDataManager) -> None:
-    print("\n" + "=" * 60)
-    print("PRUEBA REAL: COINGECKO")
-    print("=" * 60)
-
-    ticker = manager._load_market_ticker(SYMBOL)
-
-    print(f"\n→ {ticker.symbol}")
-    print(f"  Precio: ${ticker.price:,.4f}")
-    print(f"  Market cap: ${ticker.market_cap:,.0f}")
-    print(f"  Volumen 24h: ${ticker.volume_24h:,.0f}")
-    print(f"  Cambio 1h: {ticker.change_1h:.2f}%")
-    print(f"  Cambio 24h: {ticker.change_24h:.2f}%")
-    print(f"  Cambio 7d: {ticker.change_7d:.2f}%")
-
-    if ticker.price <= 0:
-        raise RuntimeError(
-            "CoinGecko devolvió un precio inválido."
-        )
-
-    global_market = manager.get_global_market()
-
-    print("\n→ Mercado global")
-    print(
-        "  Market cap global: "
-        f"${global_market['total_market_cap_usd']:,.0f}"
-    )
-    print(
-        "  Volumen global: "
-        f"${global_market['total_volume_usd']:,.0f}"
-    )
-    print(
-        "  Dominancia BTC: "
-        f"{global_market['btc_dominance']:.2f}%"
-    )
-    print(
-        "  Dominancia ETH: "
-        f"{global_market['eth_dominance']:.2f}%"
-    )
-
-    if global_market["total_market_cap_usd"] <= 0:
-        raise RuntimeError(
-            "Market cap global inválido."
-        )
-
-    print("\n✓ CoinGecko respondió correctamente.")
-
-
-def check_complete_asset(manager: MarketDataManager) -> None:
-    print("\n" + "=" * 60)
-    print("PRUEBA DE INTEGRACIÓN: MARKET.PY")
-    print("=" * 60)
-
-    asset = manager.get_asset(
-        symbol=SYMBOL,
-        timeframes=TIMEFRAMES,
-        limit=LIMIT,
-    )
-
-    print(f"\nActivo: {asset.symbol}")
-    print(f"Precio: ${asset.price:,.4f}")
-
-    for timeframe, data in asset.timeframes.items():
-        print(
-            f"  {timeframe}: "
-            f"{len(data.candles)} velas | "
-            f"fuente={data.quality.source}"
-        )
-
-        if not data.candles:
-            raise RuntimeError(
-                f"Sin velas para {timeframe}."
-            )
-
-    print("\n✓ market.py integró correctamente")
-    print("  CoinGecko + Binance.")
-
-
-def main() -> int:
-    print("\n")
-    print("🧪 RADAR EL LABORATORIO")
-    print("PRUEBA REAL DE PROVEEDORES")
-    print(f"Timestamp: {time.time():.0f}")
-    print("\n")
-
-    manager = MarketDataManager()
-
-    try:
-        check_binance(manager)
-        check_coingecko(manager)
-        check_complete_asset(manager)
-
-    except (
-        MarketDataError,
-        RuntimeError,
-        ValueError,
-    ) as exc:
-        print("\n" + "=" * 60)
-        print("❌ PRUEBA FALLIDA")
-        print("=" * 60)
-        print(f"Error: {exc}")
-        return 1
-
-    except Exception as exc:
-        print("\n" + "=" * 60)
-        print("❌ ERROR INESPERADO")
-        print("=" * 60)
-        print(
-            f"{type(exc).__name__}: {exc}"
-        )
-        return 1
-
-    print("\n" + "=" * 60)
-    print("🟢 PRUEBA REAL COMPLETADA")
-    print("=" * 60)
-    print("Binance: OK")
-    print("CoinGecko: OK")
-    print("market.py: OK")
-    print("Integración: OK")
-
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+       
